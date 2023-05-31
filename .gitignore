@@ -2,6 +2,7 @@
 __pycache__/
 data_processing/__pycache__/*
 *.py[cod]
+
 # virtual env
 venv/
 
