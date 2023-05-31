@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+data_processing/__pycache__/*
+*.py[cod]
+# virtual env
+venv/
+
+# ide settings
+/.idea/
+/.git/
+
+# data folders
+/data/clean_data/*
+/data/raw_data/*
+/data/dict/*
+/data_base/*
+
+# exception to the data folder rules to keep examples
+!/data/clean_data/readme.txt
+!/data/raw_data/readme.txt
+!/data/dict/readme.txt
+!/data_base/readme.txt
+
+!/data/raw_data/example_data.csv
+!/data/dict/example_dict.csv
+/test.py
