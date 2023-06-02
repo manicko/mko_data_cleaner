@@ -8,69 +8,11 @@ import pandas as pd
 from pathlib import Path
 import time
 
-# path to folder containing SQLight databases
-# DB_PATH = r'C:/py_exp/db/'
-# DB_NAME = 'tv_data01'
-
-# DB table keeping schema
-MASTER_TABLE = 'sqlite_master'
-
-# DB connection
-# DB_CONNECTION = sqlite3.connect(DB_PATH + DB_NAME + '.db')
-
-# Data types used to add columns in SQLight data table
-VALID_COLUMN_DTYPES = (
-    'TEXT',
-    'NUMERIC',
-    'INTEGER',
-    'REAL',
-    'BLOB'
+from default_settins import (
+    NAME_PATTERN,
+    VALID_COLUMN_DTYPES,
+    CSV_EXPORT_PARAMS,
 )
-
-# pattern used to check validity of column and table name before adding them
-NAME_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
-
-# folder and file containing data tables if data imported from SCV
-# ROOT_DIR = Path().absolute()
-# CSV_PATH_OUT = Path(ROOT_DIR, 'data/raw_data/')
-
-# DTYPES settings for panda CSV reader
-# of limited use as at the moment supports setting on GLOBAL level only
-CSV_COLUMN_DTYPES = {
-    # 'index': 'INTEGER PRIMARY KEY'
-    # 'ID':'object',
-    # 'NUM':'int64',
-    # 'Name':'object',
-    # 'CategoryID': 'object',
-    # 'CategoryName':'category',
-    # 'BrandID':'object',
-    # 'BrandName':'category'
-}
-
-# general settings for pandas CSV reader
-# (https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html)
-# can be overriden on function call level
-CSV_READ_PARAMS = {
-    'sep': ';',
-    'on_bad_lines': 'skip',
-    'encoding': 'utf-8',
-    'index_col': False,
-    'dtype': CSV_COLUMN_DTYPES,
-    'skiprows': None,
-    'decimal': ','
-}
-
-CSV_EXPORT_PARAMS = {
-    'sep': ';',
-    'encoding': 'utf-8',
-    'index': False
-}
-
-DATA_TO_SQL_PARAMS = {
-    'if_exists': 'append',
-    'index': False,
-    'index_label': None
-}
 
 
 def create_data_table(db_con: Connection, tbl_name: str, *tbl_columns: str) -> bool:
@@ -319,13 +261,18 @@ def read_csv_chunks(**reader_settings) -> iter:
         logging.error(traceback.format_exc())
 
 
+def merge_params_defaults(params: dict[str, Any], default_params: dict[str, Any]):
+    for key, val in default_params.items():
+        params.setdefault(key, val)
+
+
 def load_csv_to_sql(db_con: Connection,
                     data_table: str,
                     search_columns: list[str],
                     clean_columns: list[str],
                     csv_file: Union[str, Path],
-                    csv_reader_settings: dict[str, Any] = None,
-                    sql_loader_settings: dict[str, Any] = None
+                    csv_reader_settings: dict[str, Any],
+                    sql_loader_settings: dict[str, Any]
                     ) -> int:
     """
     Loads data from CSV file to SQLight data table using pandas module
@@ -349,16 +296,14 @@ def load_csv_to_sql(db_con: Connection,
     if tbl_exist(db_con, data_table) is True:
         raise NameError(f"There is already a table: '{data_table}' in database")
 
-    # define base settings for pandas CSV reader
-    csv_read_params: dict[str, Any] = {}
-    if CSV_READ_PARAMS and isinstance(CSV_READ_PARAMS, dict):
-        csv_read_params = CSV_READ_PARAMS.copy()
-    if csv_reader_settings:
-        csv_read_params.update(csv_reader_settings)
+    # copy and update settings for pandas CSV reader
+    csv_read_params = csv_reader_settings.copy()
     csv_read_params['filepath_or_buffer'] = csv_file
 
-    num_cols = count_csv_columns(**csv_read_params)  # count columns in CSV
-    col_names = generate_column_names(num_cols)  # generate column names to use for loader
+    # get columns count from CSV to reserve same number of columns in SQLight table
+    num_cols = count_csv_columns(**csv_read_params)
+    # generate column names to use for loader
+    col_names = generate_column_names(num_cols)
 
     creation = all((
         create_data_table(  # create empty datatable
@@ -367,7 +312,7 @@ def load_csv_to_sql(db_con: Connection,
             *col_names,
             *clean_columns
         ),
-        link_search_table(
+        link_search_table(  # create empty database for FTS search
             db_con,
             data_table,
             *search_columns
@@ -377,29 +322,14 @@ def load_csv_to_sql(db_con: Connection,
         print(f'Failed to create tables')
         return 0
 
-    csv_read_params.update(
-        {
-            'names': col_names,  # pass custom column names
-            'header': 0,  # ignor column names in CSV file
-            'index_col': False,  # do not create index column
-            'chunksize': 2000,  # number of rows to read from file
-        }
-    )
-    data_reader = read_csv_chunks(**csv_read_params)  # create CSV data reader
+    # create CSV data reader
+    csv_read_params.setdefault('chunksize', 2000)
+    data_reader = read_csv_chunks(**csv_read_params, names=col_names)
 
-    # define base settings for pandas SQL loader
-    sql_loader_params: dict[str, Any] = {}
-    if DATA_TO_SQL_PARAMS and isinstance(DATA_TO_SQL_PARAMS, dict):
-        sql_loader_params = DATA_TO_SQL_PARAMS.copy()  # use global settings as default
-    if sql_loader_settings:  # extend with func call params if any
-        sql_loader_params.update(sql_loader_settings)
-    sql_loader_params['name'] = data_table
-    sql_loader_params['con'] = db_con
-    sql_loader_params.setdefault('chunksize', 2000)  # load large file by chunks
-
+    # load DATA to SQLight from CSV data reader
     rows_count = 0  # counter for data rows in CSV file
     for chunk in data_reader:  # loop through CSV file
-        chunk.to_sql(**sql_loader_params)  # load data
+        chunk.to_sql(**sql_loader_settings, name=data_table, con=db_con)  # load data
         rows_count += chunk.shape[0]  # count rows
     print(f"{rows_count:,} rows were loaded to '{data_table}'")
     return rows_count
@@ -665,9 +595,9 @@ def search_update_query(db_con: Connection,
 
 def export_sql_to_csv(db_con: Connection,
                       data_table: str,
-                      *to_csv_params: Optional[Any],
                       file_path: str = None,
-                      file_prefix: Optional[str] = None) -> bool:
+                      file_prefix: Optional[str] = None,
+                      **to_csv_params: Optional[Any]) -> bool:
     """
     Exports SQLights data_table using pandas. Output filename will have timestamp.
     :param db_con: SQLight3 connection object
@@ -677,12 +607,7 @@ def export_sql_to_csv(db_con: Connection,
     :param file_prefix: Name of the output file to be used
     :return: bool, True or False depending on the operation success
     """
-    # define base settings for pandas to_CSV
-    params: dict[str, Any] = {}
-    if CSV_EXPORT_PARAMS and isinstance(CSV_EXPORT_PARAMS, dict):
-        params = CSV_EXPORT_PARAMS.copy()
-    if to_csv_params:
-        params.update(to_csv_params)
+
     if Path.is_dir(Path(file_path)) is False:
         print(f"Directory '{file_path}' is not a proper file path directory for CSV export")
         return False
@@ -690,12 +615,14 @@ def export_sql_to_csv(db_con: Connection,
         file_prefix = data_table
     time_str = time.strftime("%Y%m%d-%H%M%S")
 
-    params['path_or_buf'] = Path(file_path, f'{file_prefix}_{time_str}.csv')
+    # define base settings for pandas to_CSV
+    merge_params_defaults(to_csv_params, CSV_EXPORT_PARAMS)
+    to_csv_params['path_or_buf'] = Path(file_path, f'{file_prefix}_{time_str}.csv')
 
     try:
         data = pd.read_sql(f'SELECT * FROM {data_table}', db_con)
-        data.to_csv(**params)
-        print(f"Data was successfully exported to:{params['path_or_buf']}")
+        data.to_csv(**to_csv_params)
+        print(f"Data was successfully exported to: {to_csv_params['path_or_buf']}")
         return True
     except pd.errors.DataError:
         logging.error(traceback.format_exc())
