@@ -319,13 +319,18 @@ def read_csv_chunks(**reader_settings) -> iter:
         logging.error(traceback.format_exc())
 
 
+def merge_params_defaults(params: dict[str, Any], default_params: dict[str, Any]):
+    for key, val in default_params.items():
+        params.setdefault(key, val)
+
+
 def load_csv_to_sql(db_con: Connection,
                     data_table: str,
                     search_columns: list[str],
                     clean_columns: list[str],
                     csv_file: Union[str, Path],
-                    csv_reader_settings: dict[str, Any] = None,
-                    sql_loader_settings: dict[str, Any] = None
+                    csv_reader_settings: dict[str, Any],
+                    sql_loader_settings: dict[str, Any]
                     ) -> int:
     """
     Loads data from CSV file to SQLight data table using pandas module
@@ -349,16 +354,14 @@ def load_csv_to_sql(db_con: Connection,
     if tbl_exist(db_con, data_table) is True:
         raise NameError(f"There is already a table: '{data_table}' in database")
 
-    # define base settings for pandas CSV reader
-    csv_read_params: dict[str, Any] = {}
-    if CSV_READ_PARAMS and isinstance(CSV_READ_PARAMS, dict):
-        csv_read_params = CSV_READ_PARAMS.copy()
-    if csv_reader_settings:
-        csv_read_params.update(csv_reader_settings)
+    # copy and update settings for pandas CSV reader
+    csv_read_params = csv_reader_settings.copy()
     csv_read_params['filepath_or_buffer'] = csv_file
 
-    num_cols = count_csv_columns(**csv_read_params)  # count columns in CSV
-    col_names = generate_column_names(num_cols)  # generate column names to use for loader
+    # get columns count from CSV to reserve same number of columns in SQLight table
+    num_cols = count_csv_columns(**csv_read_params)
+    # generate column names to use for loader
+    col_names = generate_column_names(num_cols)
 
     creation = all((
         create_data_table(  # create empty datatable
@@ -367,7 +370,7 @@ def load_csv_to_sql(db_con: Connection,
             *col_names,
             *clean_columns
         ),
-        link_search_table(
+        link_search_table(  # create empty database for FTS search
             db_con,
             data_table,
             *search_columns
@@ -377,29 +380,14 @@ def load_csv_to_sql(db_con: Connection,
         print(f'Failed to create tables')
         return 0
 
-    csv_read_params.update(
-        {
-            'names': col_names,  # pass custom column names
-            'header': 0,  # ignor column names in CSV file
-            'index_col': False,  # do not create index column
-            'chunksize': 2000,  # number of rows to read from file
-        }
-    )
-    data_reader = read_csv_chunks(**csv_read_params)  # create CSV data reader
+    # create CSV data reader
+    csv_read_params.setdefault('chunksize', 2000)
+    data_reader = read_csv_chunks(**csv_read_params, names=col_names)
 
-    # define base settings for pandas SQL loader
-    sql_loader_params: dict[str, Any] = {}
-    if DATA_TO_SQL_PARAMS and isinstance(DATA_TO_SQL_PARAMS, dict):
-        sql_loader_params = DATA_TO_SQL_PARAMS.copy()  # use global settings as default
-    if sql_loader_settings:  # extend with func call params if any
-        sql_loader_params.update(sql_loader_settings)
-    sql_loader_params['name'] = data_table
-    sql_loader_params['con'] = db_con
-    sql_loader_params.setdefault('chunksize', 2000)  # load large file by chunks
-
+    # load DATA to SQLight from CSV data reader
     rows_count = 0  # counter for data rows in CSV file
     for chunk in data_reader:  # loop through CSV file
-        chunk.to_sql(**sql_loader_params)  # load data
+        chunk.to_sql(**sql_loader_settings, name=data_table, con=db_con)  # load data
         rows_count += chunk.shape[0]  # count rows
     print(f"{rows_count:,} rows were loaded to '{data_table}'")
     return rows_count
@@ -695,7 +683,7 @@ def export_sql_to_csv(db_con: Connection,
     try:
         data = pd.read_sql(f'SELECT * FROM {data_table}', db_con)
         data.to_csv(**params)
-        print(f"Data was successfully exported to:{params['path_or_buf']}")
+        print(f"Data was successfully exported to: {params['path_or_buf']}")
         return True
     except pd.errors.DataError:
         logging.error(traceback.format_exc())

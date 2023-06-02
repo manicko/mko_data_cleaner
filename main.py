@@ -1,6 +1,12 @@
-from data_processing.cleaner import *  # very bad practice must be rewritten to import functions
+from typing import Any
 from functools import partial
 from pathlib import Path
+import sqlite3
+import pandas as pd
+from data_processing.cleaner import (
+    load_csv_to_sql,
+    search_update_query,
+    finalize, merge_params_defaults)
 
 # defaults
 # path to folder containing SQLight databases
@@ -29,72 +35,57 @@ CSV_PATH_OUT = Path.joinpath(CSV_PATH, 'clean_data/')
 # DB connection
 DB_CONNECTION = sqlite3.connect(DB_FILE)
 
-
 # # Data types used to add columns in SQLight data table
-# VALID_COLUMN_DTYPES = (
-#     'TEXT',
-#     'NUMERIC',
-#     'INTEGER',
-#     'REAL',
-#     'BLOB'
-# )
-#
+VALID_COLUMN_DTYPES = (
+    'TEXT',
+    'NUMERIC',
+    'INTEGER',
+    'REAL',
+    'BLOB'
+)
+
 # # pattern used to check validity of column and table name before adding them
 # NAME_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
 #
 # # DTYPES settings for panda CSV reader
 # # of limited use as at the moment supports setting on GLOBAL level only
-# CSV_COLUMN_DTYPES = {
-#     # 'index': 'INTEGER PRIMARY KEY'
-#     # 'ID':'object',
-#     # 'NUM':'int64',
-#     # 'Name':'object',
-#     # 'CategoryID': 'object',
-#     # 'CategoryName':'category',
-#     # 'BrandID':'object',
-#     # 'BrandName':'category'
-# }
+CSV_COLUMN_DTYPES = {
+    # 'index': 'INTEGER PRIMARY KEY'
+    # 'ID':'object',
+    # 'NUM':'int64',
+    # 'Name':'object',
+    # 'CategoryID': 'object',
+    # 'CategoryName':'category',
+    # 'BrandID':'object',
+    # 'BrandName':'category'
+}
 #
 # # general settings for pandas CSV reader
 # # (https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html)
 # # can be overriden on function call level
-# CSV_READ_PARAMS = {
-#     'sep': ';',
-#     'on_bad_lines': 'skip',
-#     'encoding': 'utf-8',
-#     'index_col': False,
-#     'dtype': CSV_COLUMN_DTYPES,
-#     'skiprows': None,
-#     'decimal': ','
-# }
-#
-# CSV_EXPORT_PARAMS = {
-#     'sep': ';',
-#     'encoding': 'utf-8',
-#     'index': False
-# }
-#
-# DATA_TO_SQL_PARAMS = {
-#     'if_exists': 'append',
-#     'index': False,
-#     'index_label': None
-# }
+CSV_READ_PARAMS = {
+    'sep': ';',
+    'on_bad_lines': 'skip',
+    'encoding': 'utf-8',
+    'index_col': False,
+    'dtype': CSV_COLUMN_DTYPES,
+    'skiprows': None,
+    'decimal': ',',
+    'header': 0  # ignor column names in CSV file
+}
 
+CSV_EXPORT_PARAMS = {
+    'sep': ';',
+    'encoding': 'utf-8',
+    'index': False
+}
 
-def get_clean_params(**params):
-    """
-    reads CSV file with data cleaning settings
-    :param params:
-    :return:
-    """
-    # define base settings for pandas CSV reader
-    csv_read_params: dict[str, Any] = {}
-    if CSV_READ_PARAMS and isinstance(CSV_READ_PARAMS, dict):
-        csv_read_params = CSV_READ_PARAMS.copy()
-    if params:
-        csv_read_params.update(params)
-    return pd.read_csv(**csv_read_params)
-
+DATA_TO_SQL_PARAMS = {
+    'if_exists': 'append',
+    'index': False,
+    'index_label': None,
+    'chunksize': 2000
+}
 
 if __name__ == '__main__':
     table_name = 'data_table'  # name for the table to load data
@@ -123,7 +114,7 @@ if __name__ == '__main__':
     }
     clean_cols = list(clean_cols_ids.keys())
 
-    read_params = {
+    read_dict_params = {
         'filepath_or_buffer': DICT_FILE,
         'usecols': list(actions.values()) + list(clean_cols_ids.values()),
         'header': 0,
@@ -137,11 +128,10 @@ if __name__ == '__main__':
         data_table=table_name,
         search_columns=search_cols,
         clean_columns=clean_cols,
-        csv_file=CSV_FILE
+        csv_file=CSV_FILE,
+        csv_reader_settings=CSV_READ_PARAMS,
+        sql_loader_settings=DATA_TO_SQL_PARAMS
     )
-
-    # read cleaning settings from the file
-    clean_params_df = get_clean_params(**read_params)
 
     # set default parameters for data cleaning before looping through search\update values
     cleaner = partial(
@@ -150,14 +140,26 @@ if __name__ == '__main__':
         data_table=table_name,
     )
 
+    # read cleaning settings from the file
+    merge_params_defaults(read_dict_params, CSV_READ_PARAMS)
+    clean_params_df = pd.read_csv(**read_dict_params)
+
     # separate update settings and loop through
     upd_params_df = clean_params_df.loc[clean_params_df['action'] == 'upd']
+
+    # looping through dictionary by column
+    # if there are values to be set in that column (not empty rows)
+    # we pass all nonempty rows to cleaner
+    print(f'Data cleaning in process: [', end='')
     for col_name in clean_cols_ids.keys():
         rs = upd_params_df.loc[upd_params_df[col_name].notnull(), [col_name] + ['term']]
-        res = rs.values.tolist()
+        print('==', end='')
         cleaner(column=col_name, params=rs.values.tolist())
+    print(']')
 
+    # functionality to check if some rows are still empty after cleaning
     # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
 
     finalize(db_con=DB_CONNECTION, data_table=table_name, output_folder=CSV_PATH_OUT)
-    DB_CONNECTION.close()
+
+DB_CONNECTION.close()
