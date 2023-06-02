@@ -1,5 +1,6 @@
 import pandas as pd
 from functools import partial
+from time import time
 from default_settins import (
     DICT_FILE,
     DB_CONNECTION,
@@ -13,7 +14,6 @@ from data_processing.cleaner import (
     search_update_query,
     finalize,
     merge_params_defaults)
-
 
 if __name__ == '__main__':
     table_name = 'data_table'  # name for the table to load data
@@ -78,13 +78,14 @@ if __name__ == '__main__':
     # looping through dictionary by column
     # if there are values to be set in that column (not empty rows)
     # we pass all nonempty rows to cleaner
-    print(f'Data cleaning in process: [', end='')
+    print(f'Data cleaning in progress: [', end='')
+    start_time = time()
     for col_name in clean_cols_ids.keys():
         rs = upd_params_df.loc[upd_params_df[col_name].notnull(), [col_name] + ['term']]
         print('==', end='')
         cleaner(column=col_name, params=rs.values.tolist())
     print(']')
-
+    print(f"Data cleaning finished. Elapsed time: {time() - start_time:.2f} seconds")
     # functionality to check if some rows are still empty after cleaning
     # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
 
