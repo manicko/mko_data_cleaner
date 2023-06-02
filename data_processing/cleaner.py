@@ -8,69 +8,11 @@ import pandas as pd
 from pathlib import Path
 import time
 
-# path to folder containing SQLight databases
-# DB_PATH = r'C:/py_exp/db/'
-# DB_NAME = 'tv_data01'
-
-# DB table keeping schema
-MASTER_TABLE = 'sqlite_master'
-
-# DB connection
-# DB_CONNECTION = sqlite3.connect(DB_PATH + DB_NAME + '.db')
-
-# Data types used to add columns in SQLight data table
-VALID_COLUMN_DTYPES = (
-    'TEXT',
-    'NUMERIC',
-    'INTEGER',
-    'REAL',
-    'BLOB'
+from default_settins import (
+    NAME_PATTERN,
+    VALID_COLUMN_DTYPES,
+    CSV_EXPORT_PARAMS,
 )
-
-# pattern used to check validity of column and table name before adding them
-NAME_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
-
-# folder and file containing data tables if data imported from SCV
-# ROOT_DIR = Path().absolute()
-# CSV_PATH_OUT = Path(ROOT_DIR, 'data/raw_data/')
-
-# DTYPES settings for panda CSV reader
-# of limited use as at the moment supports setting on GLOBAL level only
-CSV_COLUMN_DTYPES = {
-    # 'index': 'INTEGER PRIMARY KEY'
-    # 'ID':'object',
-    # 'NUM':'int64',
-    # 'Name':'object',
-    # 'CategoryID': 'object',
-    # 'CategoryName':'category',
-    # 'BrandID':'object',
-    # 'BrandName':'category'
-}
-
-# general settings for pandas CSV reader
-# (https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html)
-# can be overriden on function call level
-CSV_READ_PARAMS = {
-    'sep': ';',
-    'on_bad_lines': 'skip',
-    'encoding': 'utf-8',
-    'index_col': False,
-    'dtype': CSV_COLUMN_DTYPES,
-    'skiprows': None,
-    'decimal': ','
-}
-
-CSV_EXPORT_PARAMS = {
-    'sep': ';',
-    'encoding': 'utf-8',
-    'index': False
-}
-
-DATA_TO_SQL_PARAMS = {
-    'if_exists': 'append',
-    'index': False,
-    'index_label': None
-}
 
 
 def create_data_table(db_con: Connection, tbl_name: str, *tbl_columns: str) -> bool:
@@ -653,9 +595,9 @@ def search_update_query(db_con: Connection,
 
 def export_sql_to_csv(db_con: Connection,
                       data_table: str,
-                      *to_csv_params: Optional[Any],
                       file_path: str = None,
-                      file_prefix: Optional[str] = None) -> bool:
+                      file_prefix: Optional[str] = None,
+                      **to_csv_params: Optional[Any]) -> bool:
     """
     Exports SQLights data_table using pandas. Output filename will have timestamp.
     :param db_con: SQLight3 connection object
@@ -665,12 +607,7 @@ def export_sql_to_csv(db_con: Connection,
     :param file_prefix: Name of the output file to be used
     :return: bool, True or False depending on the operation success
     """
-    # define base settings for pandas to_CSV
-    params: dict[str, Any] = {}
-    if CSV_EXPORT_PARAMS and isinstance(CSV_EXPORT_PARAMS, dict):
-        params = CSV_EXPORT_PARAMS.copy()
-    if to_csv_params:
-        params.update(to_csv_params)
+
     if Path.is_dir(Path(file_path)) is False:
         print(f"Directory '{file_path}' is not a proper file path directory for CSV export")
         return False
@@ -678,12 +615,14 @@ def export_sql_to_csv(db_con: Connection,
         file_prefix = data_table
     time_str = time.strftime("%Y%m%d-%H%M%S")
 
-    params['path_or_buf'] = Path(file_path, f'{file_prefix}_{time_str}.csv')
+    # define base settings for pandas to_CSV
+    merge_params_defaults(to_csv_params, CSV_EXPORT_PARAMS)
+    to_csv_params['path_or_buf'] = Path(file_path, f'{file_prefix}_{time_str}.csv')
 
     try:
         data = pd.read_sql(f'SELECT * FROM {data_table}', db_con)
-        data.to_csv(**params)
-        print(f"Data was successfully exported to: {params['path_or_buf']}")
+        data.to_csv(**to_csv_params)
+        print(f"Data was successfully exported to: {to_csv_params['path_or_buf']}")
         return True
     except pd.errors.DataError:
         logging.error(traceback.format_exc())
