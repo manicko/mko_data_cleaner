@@ -566,7 +566,7 @@ def search_update_query(db_con: Connection,
     :param db_con: SQLight3 connection object
     :param data_table: str, name of the data table
     :param column: str, name of a column to set as Value
-    :param params: list of lists with pairs: search_term and search_valueas follows
+    :param params: list of lists with pairs: search_term and search_values follows
             search_term: str, Value to be placed in the updated column
             search_value: str, Search term ising SQLight FTS5 syntax after MATCH
     https://www.sqlite.org/fts5.html#full_text_query_syntax
@@ -617,12 +617,28 @@ def export_sql_to_csv(db_con: Connection,
 
     # define base settings for pandas to_CSV
     merge_params_defaults(to_csv_params, CSV_EXPORT_PARAMS)
-    to_csv_params['path_or_buf'] = Path(file_path, f'{file_prefix}_{time_str}.csv')
 
     try:
-        data = pd.read_sql(f'SELECT * FROM {data_table}', db_con)
-        data.to_csv(**to_csv_params)
-        print(f"Data was successfully exported to: {to_csv_params['path_or_buf']}")
+        params = to_csv_params.copy()
+        # compression = {'method': 'zip'}
+        row_counter = 0
+        max_file_rows = 1000000
+        file_index = 0
+        print(f'Data writing in progress:')
+
+        output_file_name = Path(file_path, f'{file_prefix}_{time_str}.csv')
+        for data_chunk in pd.read_sql(f'SELECT * FROM {data_table}', db_con, chunksize=5000):
+            row_counter += len(data_chunk.index)
+            if row_counter > max_file_rows * (1 + file_index):
+                file_index += 1
+                params['header'] = True
+                output_file_name = Path(file_path, f'{file_prefix}_{time_str}_{str(file_index)}.csv')
+            data_chunk.to_csv(path_or_buf=output_file_name, **params)
+            params['header'] = False
+
+            print(f'Rows count:{row_counter}', end='\r')
+        print(f'Rows count:{row_counter}')
+        print(f"Data was successfully exported to: {output_file_name}")
         return True
     except pd.errors.DataError:
         logging.error(traceback.format_exc())

@@ -11,11 +11,11 @@ DB_FILE = Path.joinpath(ROOT_DIR, DB_PATH, DB_NAME + '.db')
 CSV_PATH = Path.joinpath(ROOT_DIR, r'data/')
 
 # file with raw data for cleaning
-CSV_FILE_NAME = 'example_data'
+CSV_FILE_NAME = 'RegTV_meat_sausages_2021-2023-may_original_utf-8_20230728-095852'
 CSV_FILE = Path.joinpath(CSV_PATH, 'raw_data/', CSV_FILE_NAME + '.csv')
 
 # file with the dictionary for data cleaning settings
-DICT_NAME = 'example_dict'
+DICT_NAME = 'myasn_reg_tv_windows_utf_8'
 DICT_FILE = Path(CSV_PATH, 'dict/', DICT_NAME + '.csv')
 
 # folder to output CSV from database
@@ -68,7 +68,9 @@ CSV_READ_PARAMS = {
 
 CSV_EXPORT_PARAMS = {
     'sep': ';',
-    'encoding': 'utf-8',
+    'encoding': 'UTF-8',
+    'mode': 'a',
+    'header': True,
     'index': False
 }
 
