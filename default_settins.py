@@ -15,7 +15,7 @@ CSV_FILE_NAME = 'RegTV_meat_sausages_2021-2023-may_original_utf-8_20230728-09585
 CSV_FILE = Path.joinpath(CSV_PATH, 'raw_data/', CSV_FILE_NAME + '.csv')
 
 # file with the dictionary for data cleaning settings
-DICT_NAME = 'myasn_reg_tv_windows_utf_8'
+DICT_NAME = 'myasn_reg_tv_utf_8'
 DICT_FILE = Path(CSV_PATH, 'dict/', DICT_NAME + '.csv')
 
 # folder to output CSV from database
