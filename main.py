@@ -17,19 +17,13 @@ from data_processing.cleaner import (
 
 if __name__ == '__main__':
     table_name = 'data_table'  # name for the table to load data
-    # search_cols = ['col_0',  # columns in the data table to be used for search
-    #                'col_1',
-    #                'col_2',
-    #                'col_3',
-    #                'col_4',
-    #                'col_5']
-    search_cols = ['col_4',  # columns in the data table to be used for search
+    search_cols = ['col_2',  # columns in the data table to be used for search
+                   'col_3',
+                   'col_4',
                    'col_5',
                    'col_6',
                    'col_7',
-                   'col_8',
-                   'col_9',
-                   'col_10']
+                   'col_8']
     actions = {  # columns' indexes in the file_search containing settings
         'action': 0,  # update or delete setting
         'term': 3  # search string used after match setting in the SQL query
@@ -38,13 +32,14 @@ if __name__ == '__main__':
         'cat': 4,
         'adv': 5,
         'bra': 6,
-        'prd': 7,
-        'cln_0': 8,
-        'cln_1': 9,
-        'cln_2': 10,
-        'cln_3': 11,
-        'cln_4': 12,
-        'cln_5': 13
+        'sbr': 7,
+        'mdl': 8,
+        'cln_0': 9,
+        'cln_1': 10,
+        'cln_2': 11,
+        'cln_3': 12,
+        'cln_4': 13,
+        'cln_5': 14
     }
     clean_cols = list(clean_cols_ids.keys())
 
