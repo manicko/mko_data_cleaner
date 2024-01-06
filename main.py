@@ -1,7 +1,7 @@
 import pandas as pd
 from functools import partial
 from time import time
-from default_settins import (
+from settings.default_settins import (
     DICT_FILE,
     DB_CONNECTION,
     CSV_FILE,
@@ -10,10 +10,13 @@ from default_settins import (
     CSV_PATH_OUT,
 )
 from data_processing.cleaner import (
-    load_csv_to_sql,
+    create_search_table,
     search_update_query,
     finalize,
-    merge_params_defaults)
+    merge_params_defaults,
+    get_csv_columns,
+    csv_to_search_table
+)
 
 if __name__ == '__main__':
     table_name = 'data_table'  # name for the table to load data
@@ -50,17 +53,30 @@ if __name__ == '__main__':
         'skiprows': 0,
         'names': list(actions.keys()) + list(clean_cols_ids.keys())
     }
-
-    # creating database, datatable, search table and fill with data
-    load_csv_to_sql(
+    # get column names based on the sample file
+    sample_columns = get_csv_columns(
+        csv_reader_settings=CSV_READ_PARAMS,
+        sample_csv_file=CSV_FILE
+    )
+    # creating database, datatable, search table
+    create_search_table(
         db_con=DB_CONNECTION,
         data_table=table_name,
         search_columns=search_cols,
         clean_columns=clean_cols,
+        col_names=sample_columns,
+
+    )
+    # loading data to the search table and getting back rows count
+    rows_count = csv_to_search_table(
+        db_con=DB_CONNECTION,
+        data_table=table_name,
         csv_file=CSV_FILE,
+        col_names=sample_columns,
         csv_reader_settings=CSV_READ_PARAMS,
         sql_loader_settings=DATA_TO_SQL_PARAMS
     )
+    print(f"{rows_count:,} rows were loaded to '{table_name}'")
 
     # set default parameters for data cleaning before looping through search\update values
     cleaner = partial(

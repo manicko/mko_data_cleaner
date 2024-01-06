@@ -3,12 +3,12 @@ import sqlite3
 # defaults
 # path to folder containing SQLight databases
 ROOT_DIR = Path().absolute()
-DB_PATH = 'data_base'
+DB_PATH = '../data_base'
 DB_NAME = 'db_example'
 DB_FILE = Path.joinpath(ROOT_DIR, DB_PATH, DB_NAME + '.db')
 
 # folder containing data for import export CSV
-CSV_PATH = Path.joinpath(ROOT_DIR, r'data/')
+CSV_PATH = Path.joinpath(ROOT_DIR, r'../data/')
 
 # file with raw data for cleaning
 CSV_FILE_NAME = 'parfiumeriia_2023-02-01_2023-02-28_20240106_143305'

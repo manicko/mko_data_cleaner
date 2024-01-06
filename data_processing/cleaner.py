@@ -8,7 +8,7 @@ import pandas as pd
 from pathlib import Path
 import time
 
-from default_settins import (
+from settings.default_settins import (
     NAME_PATTERN,
     VALID_COLUMN_DTYPES,
     CSV_EXPORT_PARAMS,
@@ -266,44 +266,25 @@ def merge_params_defaults(params: dict[str, Any], default_params: dict[str, Any]
         params.setdefault(key, val)
 
 
-def load_csv_to_sql(db_con: Connection,
-                    data_table: str,
-                    search_columns: list[str],
-                    clean_columns: list[str],
-                    csv_file: Union[str, Path],
-                    csv_reader_settings: dict[str, Any],
-                    sql_loader_settings: dict[str, Any]
-                    ) -> int:
+def create_search_table(db_con: Connection,
+                        data_table: str,
+                        search_columns: list[str],
+                        clean_columns: list[str],
+                        col_names: list[str]
+                        ) -> int:
     """
-    Loads data from CSV file to SQLight data table using pandas module
+    creates datatable in the database
     :param db_con: SQLight3 connection object, connection to the datatable
     :param data_table: name of the existing table
     :param clean_columns:
     :param search_columns:
-    :param csv_file: pathstring to CSV file
-    :param csv_reader_settings: use to override global CSV_READ_PARAMS
-        for details refer to pandas CSV reader settings
-        https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
-    :param sql_loader_settings:use to extend or override global CSV_READ_PARAMS
-        for details refer to pandas to_sql settings
+    :param col_names:
         https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_sql.html
     :return: count of data rows loaded
     """
 
-    if Path.is_file(Path(csv_file)) is False:
-        raise NameError(f"File: '{csv_file}' not found")
-
     if tbl_exist(db_con, data_table) is True:
         raise NameError(f"There is already a table: '{data_table}' in database")
-
-    # copy and update settings for pandas CSV reader
-    csv_read_params = csv_reader_settings.copy()
-    csv_read_params['filepath_or_buffer'] = csv_file
-
-    # get columns count from CSV to reserve same number of columns in SQLight table
-    num_cols = count_csv_columns(**csv_read_params)
-    # generate column names to use for loader
-    col_names = generate_column_names(num_cols)
 
     creation = all((
         create_data_table(  # create empty datatable
@@ -320,8 +301,64 @@ def load_csv_to_sql(db_con: Connection,
     ))
     if creation is False:
         print(f'Failed to create tables')
-        return 0
+        return False
+    print(f'Datatable: {data_table} successfully created')
+    return True
 
+
+def get_csv_columns(csv_reader_settings: dict[str, Any], sample_csv_file: Union[str, Path]) -> list[str]:
+    """
+
+    :param sample_csv_file: pathstring to CSV file
+    :param csv_reader_settings: use to override global CSV_READ_PARAMS
+        for details refer to pandas CSV reader settings
+        https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
+
+    :return:
+    """
+    if Path.is_file(Path(sample_csv_file)) is False:
+        raise NameError(f"File: '{sample_csv_file}' not found")
+
+    # copy and update settings for pandas CSV reader
+    csv_read_params = csv_reader_settings.copy()
+    csv_read_params['filepath_or_buffer'] = sample_csv_file
+
+    # get columns count from CSV to reserve same number of columns in SQLight table
+    num_cols = count_csv_columns(**csv_read_params)
+    # generate column names to use for loader
+    col_names = generate_column_names(num_cols)
+    return col_names
+
+
+def csv_to_search_table(db_con: Connection,
+                        data_table: str,
+                        col_names: list[str],
+                        csv_file: Union[str, Path],
+                        csv_reader_settings: dict[str, Any],
+                        sql_loader_settings: dict[str, Any]
+                        ) -> int:
+    """
+
+    :param db_con:
+    :param data_table:
+    :param col_names:
+    :param csv_file: pathstring to CSV file
+    :param csv_reader_settings: use to override global CSV_READ_PARAMS
+        for details refer to pandas CSV reader settings
+        https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
+    :param sql_loader_settings:use to extend or override global CSV_READ_PARAMS
+        for details refer to pandas to_sql settings
+    :return: int, number of rows loaded to database
+    """
+    if Path.is_file(Path(csv_file)) is False:
+        raise NameError(f"File: '{csv_file}' not found")
+
+    # copy and update settings for pandas CSV reader
+    csv_read_params = csv_reader_settings.copy()
+    csv_read_params['filepath_or_buffer'] = csv_file
+    num_cols = count_csv_columns(**csv_read_params)
+    if num_cols != len(col_names):
+        print(f"Number of columns in the file:{num_cols} does not correspond to sample file: {len(col_names)}")
     # create CSV data reader
     csv_read_params.setdefault('chunksize', 2000)
     data_reader = read_csv_chunks(**csv_read_params, names=col_names)
@@ -331,7 +368,6 @@ def load_csv_to_sql(db_con: Connection,
     for chunk in data_reader:  # loop through CSV file
         chunk.to_sql(**sql_loader_settings, name=data_table, con=db_con)  # load data
         rows_count += chunk.shape[0]  # count rows
-    print(f"{rows_count:,} rows were loaded to '{data_table}'")
     return rows_count
 
 
@@ -635,9 +671,8 @@ def export_sql_to_csv(db_con: Connection,
                 output_file_name = Path(file_path, f'{file_prefix}_{time_str}_{str(file_index)}.csv')
             data_chunk.to_csv(path_or_buf=output_file_name, **params)
             params['header'] = False
-
-            print(f'Rows count:{row_counter}', end='\r')
-        print(f'Rows count:{row_counter}')
+            print(f'Rows count:{row_counter:,}', end='\r')
+        print(f'Rows count:{row_counter:,}')
         print(f"Data was successfully exported to: {output_file_name}")
         return True
     except pd.errors.DataError:
