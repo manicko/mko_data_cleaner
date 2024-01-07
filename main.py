@@ -1,13 +1,11 @@
 import pandas as pd
+from pathlib import Path
 from functools import partial
 from time import time
+import sqlite3
 from settings.default_settins import (
-    # DICT_FILE,
-    DB_CONNECTION,
-    # CSV_FILE,
     CSV_READ_PARAMS,
     DATA_TO_SQL_PARAMS,
-    CSV_PATH_OUT,
 )
 from data_processing.cleaner import (
     create_search_table,
@@ -26,6 +24,7 @@ from data_processing.utils import (
 REPORT_SETTINGS = 'settings/report_settings.yaml'
 
 if __name__ == '__main__':
+
     # read report settings
     r_settings = yaml_to_dict(REPORT_SETTINGS)
     dict_setting = r_settings['DICT_FILE_SETTINGS']
@@ -33,16 +32,18 @@ if __name__ == '__main__':
     db_settings = r_settings['DATABASE_SETTINGS']
     export_settings = r_settings['EXPORT_SETTINGS']
 
+    # DB connection
     table_name = db_settings['table_name']
+    db_path = get_path(r_settings['PATH'], db_settings['folder'], mkdir=True)
+    db_file = Path(db_path, db_settings['file_name'] + '.db')
+    db_connection = sqlite3.connect(db_file)
+
+    # read dictionary
     search_cols = data_settings['search_cols']
     actions = dict_setting['actions']
     clean_cols_ids = dict_setting['clean_cols_ids']
     clean_cols = list(clean_cols_ids.keys())
-
     dict_path = get_path(r_settings['PATH'], dict_setting['folder'], dict_setting['file_name'])
-    data_path = get_path(r_settings['PATH'], data_settings['folder'])
-    export_path = get_path(r_settings['PATH'], export_settings['folder'], mkdir=True)
-
     read_dict_params = {
         'filepath_or_buffer': dict_path,
         'usecols': list(actions.values()) + list(clean_cols_ids.values()),
@@ -51,17 +52,20 @@ if __name__ == '__main__':
         'names': list(actions.keys()) + list(clean_cols_ids.keys())
     }
 
+    # get data folder and files
+    data_path = get_path(r_settings['PATH'], data_settings['folder'])
+    export_path = get_path(r_settings['PATH'], export_settings['folder'], mkdir=True)
     data_files = get_dir_content(data_path)
 
     sample_file = next(data_files)
-    # # get column names based on the sample file
+    # get column names based on the sample file
     sample_columns = get_csv_columns(
         csv_reader_settings=CSV_READ_PARAMS,
         sample_csv_file=sample_file
     )
     # creating database, datatable, search table
     create_search_table(
-        db_con=DB_CONNECTION,
+        db_con=db_connection,
         data_table=table_name,
         search_columns=search_cols,
         clean_columns=clean_cols,
@@ -73,7 +77,7 @@ if __name__ == '__main__':
     file = sample_file
     while file:
         rows_count = csv_to_search_table(
-            db_con=DB_CONNECTION,
+            db_con=db_connection,
             data_table=table_name,
             csv_file=file,
             col_names=sample_columns,
@@ -84,10 +88,11 @@ if __name__ == '__main__':
         total_rows += rows_count
         file = next(data_files, False)
     print(f"{total_rows:,} rows were loaded to '{table_name}'")
+
     # set default parameters for data cleaning before looping through search\update values
     cleaner = partial(
         search_update_query,
-        db_con=DB_CONNECTION,
+        db_con=db_connection,
         data_table=table_name,
     )
 
@@ -112,5 +117,5 @@ if __name__ == '__main__':
     # functionality to check if some rows are still empty after cleaning
     # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
 
-    finalize(db_con=DB_CONNECTION, data_table=table_name, output_folder=export_path)
-    DB_CONNECTION.close()
+    finalize(db_con=db_connection, data_table=table_name, output_folder=export_path)
+    db_connection.close()

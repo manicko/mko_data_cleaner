@@ -35,9 +35,11 @@
     }
   },
   'DATABASE_SETTINGS': {
+    folder: 'data_base',
+    file_name: 'db_example',
     table_name: 'data_table'
   },
-  'EXPORT_SETTINGS':{
+  'EXPORT_SETTINGS': {
     'folder': 'clean_data'
   }
 }
