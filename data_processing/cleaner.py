@@ -671,9 +671,9 @@ def export_sql_to_csv(db_con: Connection,
                 output_file_name = Path(file_path, f'{file_prefix}_{time_str}_{str(file_index)}.csv')
             data_chunk.to_csv(path_or_buf=output_file_name, **params)
             params['header'] = False
-            print(f'Rows count:{row_counter:,}', end='\r')
-        print(f'Rows count:{row_counter:,}')
-        print(f"Data was successfully exported to: {output_file_name}")
+            print(f'{row_counter:,} rows', end='\r')
+
+        print(f"{row_counter:,} data rows were successfully exported to: {output_file_name}")
         return True
     except pd.errors.DataError:
         logging.error(traceback.format_exc())

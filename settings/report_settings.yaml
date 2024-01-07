@@ -1,0 +1,43 @@
+{
+  'PATH': 'data/parfiumeriia/',
+  'DATA_FILES_SETTINGS': {
+    'folder': 'raw_data',
+    'file_name': 'parfiumeriia_2023-02-01_2023-02-28_20240106_143305.csv',
+    'search_cols': [ # columns in the data table to be used for search
+      'col_2',
+      'col_3',
+      'col_4',
+      'col_5',
+      'col_6',
+      'col_7',
+      'col_8'
+    ]
+  },
+  'DICT_FILE_SETTINGS': {
+    'folder': 'dict',
+    'file_name': 'parfiumeriia_2023-02-01_2023-03-22_20240106_143343.csv',
+    'actions': { # columns' indexes in the file_search containing settings
+      'action': 0,  # update or delete setting
+      'term': 3  # search string used after match setting in the SQL query
+    },
+    clean_cols_ids: { # indexes of columns containing output values
+      'cat': 4,
+      'adv': 5,
+      'bra': 6,
+      'sbr': 7,
+      'mdl': 8,
+      'cln_0': 9,
+      'cln_1': 10,
+      'cln_2': 11,
+      'cln_3': 12,
+      'cln_4': 13,
+      'cln_5': 14
+    }
+  },
+  'DATABASE_SETTINGS': {
+    table_name: 'data_table'
+  },
+  'EXPORT_SETTINGS':{
+    'folder': 'clean_data'
+  }
+}

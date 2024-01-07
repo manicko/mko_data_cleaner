@@ -2,24 +2,26 @@ from pathlib import Path
 import sqlite3
 # defaults
 # path to folder containing SQLight databases
-ROOT_DIR = Path().absolute()
-DB_PATH = '../data_base'
+# ROOT_DIR = Path().absolute()
+DB_PATH = 'data_base'
 DB_NAME = 'db_example'
-DB_FILE = Path.joinpath(ROOT_DIR, DB_PATH, DB_NAME + '.db')
+DB_FILE = Path(DB_PATH, DB_NAME + '.db')
+if DB_FILE.exists() is False:
+    print(f'DB file does not exists {DB_FILE}')
 
 # folder containing data for import export CSV
-CSV_PATH = Path.joinpath(ROOT_DIR, r'../data/')
+CSV_PATH = Path('data')
 
 # file with raw data for cleaning
 CSV_FILE_NAME = 'parfiumeriia_2023-02-01_2023-02-28_20240106_143305'
-CSV_FILE = Path.joinpath(CSV_PATH, 'raw_data/', CSV_FILE_NAME + '.csv')
+CSV_FILE = Path(CSV_PATH, 'raw_data/', CSV_FILE_NAME + '.csv')
 
 # file with the dictionary for data cleaning settings
 DICT_NAME = 'parfiumeriia_2023-02-01_2023-03-22_20240106_143343'
 DICT_FILE = Path(CSV_PATH, 'dict/', DICT_NAME + '.csv')
 
 # folder to output CSV from database
-CSV_PATH_OUT = Path.joinpath(CSV_PATH, 'clean_data/')
+CSV_PATH_OUT = Path(CSV_PATH, 'clean_data/')
 
 # # DB table keeping schema
 MASTER_TABLE = 'sqlite_master'

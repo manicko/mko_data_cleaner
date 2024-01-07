@@ -15,6 +15,7 @@ venv/
 /data/raw_data/*
 /data/dict/*
 /data_base/*
+/data
 
 # exception to the data folder rules to keep examples
 !/data/clean_data/readme.txt
