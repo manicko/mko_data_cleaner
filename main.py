@@ -3,15 +3,11 @@ from pathlib import Path
 from functools import partial
 from time import time
 import sqlite3
-from settings.default_settins import (
-    CSV_READ_PARAMS,
-    DATA_TO_SQL_PARAMS,
-)
+
 from data_processing.cleaner import (
     create_search_table,
     search_update_query,
     finalize,
-    merge_params_defaults,
     get_csv_columns,
     csv_to_search_table
 )
@@ -20,6 +16,13 @@ from data_processing.utils import (
     get_path,
     get_dir_content
 )
+
+DATA_TO_SQL_PARAMS = {
+    'if_exists': 'append',
+    'index': False,
+    'index_label': None,
+    'chunksize': 2000
+}
 
 REPORT_SETTINGS = 'settings/report_settings.yaml'
 
@@ -31,6 +34,7 @@ if __name__ == '__main__':
     data_settings = r_settings['DATA_FILES_SETTINGS']
     db_settings = r_settings['DATABASE_SETTINGS']
     export_settings = r_settings['EXPORT_SETTINGS']
+    reader_settings = r_settings['READ_SETTINGS']
 
     # DB connection
     table_name = db_settings['table_name']
@@ -44,13 +48,6 @@ if __name__ == '__main__':
     clean_cols_ids = dict_setting['clean_cols_ids']
     clean_cols = list(clean_cols_ids.keys())
     dict_path = get_path(r_settings['PATH'], dict_setting['folder'], dict_setting['file_name'])
-    read_dict_params = {
-        'filepath_or_buffer': dict_path,
-        'usecols': list(actions.values()) + list(clean_cols_ids.values()),
-        'header': 0,
-        'skiprows': 0,
-        'names': list(actions.keys()) + list(clean_cols_ids.keys())
-    }
 
     # get data folder and files
     data_path = get_path(r_settings['PATH'], data_settings['folder'])
@@ -60,7 +57,7 @@ if __name__ == '__main__':
     sample_file = next(data_files)
     # get column names based on the sample file
     sample_columns = get_csv_columns(
-        csv_reader_settings=CSV_READ_PARAMS,
+        csv_reader_settings=reader_settings['from_csv'],
         sample_csv_file=sample_file
     )
     # creating database, datatable, search table
@@ -81,7 +78,7 @@ if __name__ == '__main__':
             data_table=table_name,
             csv_file=file,
             col_names=sample_columns,
-            csv_reader_settings=CSV_READ_PARAMS,
+            csv_reader_settings=reader_settings['from_csv'],
             sql_loader_settings=DATA_TO_SQL_PARAMS
         )
         print(f"{rows_count:,} rows from file '{file}' were loaded to '{table_name}'")
@@ -97,8 +94,13 @@ if __name__ == '__main__':
     )
 
     # read cleaning settings from the file
-    merge_params_defaults(read_dict_params, CSV_READ_PARAMS)
-    clean_params_df = pd.read_csv(**read_dict_params)
+
+    clean_params_df = pd.read_csv(
+        filepath_or_buffer=dict_path,
+        usecols=list(actions.values()) + list(clean_cols_ids.values()),
+        names=list(actions.keys()) + list(clean_cols_ids.keys()),
+        **reader_settings['from_csv']
+    )
 
     # separate update settings and loop through
     upd_params_df = clean_params_df.loc[clean_params_df['action'] == 'upd']
@@ -117,5 +119,10 @@ if __name__ == '__main__':
     # functionality to check if some rows are still empty after cleaning
     # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
 
-    finalize(db_con=db_connection, data_table=table_name, output_folder=export_path)
+    finalize(
+        db_con=db_connection,
+        data_table=table_name,
+        output_folder=export_path,
+        **export_settings['to_csv']
+    )
     db_connection.close()

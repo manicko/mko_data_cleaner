@@ -8,11 +8,20 @@ import pandas as pd
 from pathlib import Path
 import time
 
-from settings.default_settins import (
-    NAME_PATTERN,
-    VALID_COLUMN_DTYPES,
-    CSV_EXPORT_PARAMS,
+# # DB table keeping schema
+MASTER_TABLE = 'sqlite_master'
+
+# # Data types used to add columns in SQLight data table
+VALID_COLUMN_DTYPES = (
+    'TEXT',
+    'NUMERIC',
+    'INTEGER',
+    'REAL',
+    'BLOB'
 )
+
+# pattern used to check validity of column and table name before adding them
+NAME_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 
 def create_data_table(db_con: Connection, tbl_name: str, *tbl_columns: str) -> bool:
@@ -261,11 +270,6 @@ def read_csv_chunks(**reader_settings) -> iter:
         logging.error(traceback.format_exc())
 
 
-def merge_params_defaults(params: dict[str, Any], default_params: dict[str, Any]):
-    for key, val in default_params.items():
-        params.setdefault(key, val)
-
-
 def create_search_table(db_con: Connection,
                         data_table: str,
                         search_columns: list[str],
@@ -375,18 +379,27 @@ def finalize(db_con: Connection,
              data_table: str,
              search_suffix: str = '_fts',
              export: Optional[bool] = True,
-             output_folder: Optional[Union[str, Path]] = None) -> bool:
+             output_folder: Optional[Union[str, Path]] = None,
+             **export_params: [dict],
+             ) -> bool:
     """
+
     Export results to the file and drops tables
     :param db_con: SQLight3 connection object
     :param data_table: str, name of the table to be dropped
     :param search_suffix: str, suffix used for the search table
     :param export: bool, True if export is needed
     :param output_folder: str, Path to the output directory
+    :param export_params: dict, settings for csv export for Pandas
     :return: bool, True if succeeded
     """
     if export is True:
-        exported = export_sql_to_csv(db_con=db_con, data_table=data_table, file_path=output_folder)
+        exported = export_sql_to_csv(
+            db_con=db_con,
+            data_table=data_table,
+            file_path=output_folder,
+            **export_params
+        )
         if exported is False:
             return False
     finalised = all((
@@ -641,6 +654,7 @@ def export_sql_to_csv(db_con: Connection,
     :param to_csv_params: Optional[Any], use to update global CSV_EXPORT_PARAMS
     :param file_path: path to the CSV files storage
     :param file_prefix: Name of the output file to be used
+    :param to_csv_params: dict, settings for Pandas' CSV export
     :return: bool, True or False depending on the operation success
     """
 
@@ -652,25 +666,28 @@ def export_sql_to_csv(db_con: Connection,
     time_str = time.strftime("%Y%m%d-%H%M%S")
 
     # define base settings for pandas to_CSV
-    merge_params_defaults(to_csv_params, CSV_EXPORT_PARAMS)
 
     try:
         params = to_csv_params.copy()
-        # compression = {'method': 'zip'}
+        max_file_rows = params.pop('chunksize', 10000)
         row_counter = 0
-        max_file_rows = 1000000
         file_index = 0
         print(f'Data writing in progress:')
-
-        output_file_name = Path(file_path, f'{file_prefix}_{time_str}.csv')
+        ext = ''
+        if 'compression' in to_csv_params and 'method' in to_csv_params['compression']:
+            ext = '.' + to_csv_params['compression']['method']
+            ext = ext.replace('.gzip', '.gz')
+        # if used with zip chunksize MUST be the same as max_file_rows
+        # due to the bug in Pandas module
+        output_file_name = Path(file_path, f'{file_prefix}_{time_str}_{str(file_index)}.csv{ext}')
         for data_chunk in pd.read_sql(f'SELECT * FROM {data_table}', db_con, chunksize=5000):
             row_counter += len(data_chunk.index)
-            if row_counter > max_file_rows * (1 + file_index):
+            if row_counter > max_file_rows * file_index:
                 file_index += 1
-                params['header'] = True
-                output_file_name = Path(file_path, f'{file_prefix}_{time_str}_{str(file_index)}.csv')
+                params['header'] = True  # turn on headers for a new file
+                output_file_name = Path(file_path, f'{file_prefix}_{time_str}_{str(file_index)}.csv{ext}')
             data_chunk.to_csv(path_or_buf=output_file_name, **params)
-            params['header'] = False
+            params['header'] = False  # turn of headers if continue
             print(f'{row_counter:,} rows', end='\r')
 
         print(f"{row_counter:,} data rows were successfully exported to: {output_file_name}")
