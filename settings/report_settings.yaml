@@ -1,5 +1,5 @@
 {
-  'PATH': 'data/parfiumeriia/',
+  'PATH': 'data/yay/',
   'DATA_FILES_SETTINGS': {
     'folder': 'raw_data',
     'file_name': 'parfiumeriia_2023-02-01_2023-02-28_20240106_143305.csv',

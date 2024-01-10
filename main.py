@@ -42,7 +42,7 @@ if __name__ == '__main__':
     db_file = Path(db_path, db_settings['file_name'] + '.db')
     db_connection = sqlite3.connect(db_file)
 
-    # read dictionary
+    # set dictionary params
     search_cols = data_settings['search_cols']
     actions = dict_setting['actions']
     clean_cols_ids = dict_setting['clean_cols_ids']
@@ -93,8 +93,7 @@ if __name__ == '__main__':
         data_table=table_name,
     )
 
-    # read cleaning settings from the file
-
+    # read cleaning settings from the dictionary
     clean_params_df = pd.read_csv(
         filepath_or_buffer=dict_path,
         usecols=list(actions.values()) + list(clean_cols_ids.values()),

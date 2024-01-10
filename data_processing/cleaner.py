@@ -364,7 +364,7 @@ def csv_to_search_table(db_con: Connection,
     if num_cols != len(col_names):
         print(f"Number of columns in the file:{num_cols} does not correspond to sample file: {len(col_names)}")
     # create CSV data reader
-    csv_read_params.setdefault('chunksize', 2000)
+    csv_read_params.setdefault('chunksize', 5000)
     data_reader = read_csv_chunks(**csv_read_params, names=col_names)
 
     # load DATA to SQLight from CSV data reader
