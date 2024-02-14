@@ -57,6 +57,6 @@ if __name__ == '__main__':
         file = next(dict_files, False)
 
     df = pd.concat(dict_list, ignore_index=True)
-    out_dict_path = Path(dict_path, 'out_dict.csv')
+    out_dict_path = Path(dict_path, 'merged_dictionary.csv')
     df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
     df.to_csv(path_or_buf=out_dict_path, encoding='UTF-8', sep=';', index=False)
