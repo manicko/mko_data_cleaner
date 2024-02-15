@@ -59,4 +59,5 @@ if __name__ == '__main__':
     df = pd.concat(dict_list, ignore_index=True)
     out_dict_path = Path(dict_path, 'merged_dictionary.csv')
     df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
+    df.sort_values(by=['search_column_idx'], ascending=True, inplace=True)
     df.to_csv(path_or_buf=out_dict_path, encoding='UTF-8', sep=';', index=False)
