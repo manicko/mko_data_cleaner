@@ -52,7 +52,7 @@ if __name__ == '__main__':
     # get data folder and files
     data_path = get_path(r_settings['PATH'], data_settings['folder'])
     export_path = get_path(r_settings['PATH'], export_settings['folder'], mkdir=True)
-    data_files = get_dir_content(data_path)
+    data_files = get_dir_content(data_path, ext=data_settings.get('ext', 'csv'))
 
     sample_file = next(data_files)
     # get column names based on the sample file

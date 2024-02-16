@@ -1,7 +1,8 @@
 {
-  'PATH': 'data/confectionery/',
+  'PATH': 'data/snacks/',
   'DATA_FILES_SETTINGS': {
     'folder': 'raw_data',
+    'ext': 'gz', # data files'  extension
     #'file_name': 'parfiumeriia_2023-02-01_2023-02-28_20240106_143305.csv',
     'search_cols': [ # columns in the data table to be used for search
       'col_2',
