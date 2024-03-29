@@ -1,16 +1,6 @@
 import pandas as pd
 from pathlib import Path
-from functools import partial
-from time import time
-import sqlite3
 
-from data_processing.cleaner import (
-    create_search_table,
-    search_update_query,
-    finalize,
-    get_csv_columns,
-    csv_to_search_table
-)
 from data_processing.utils import (
     yaml_to_dict,
     get_path,
@@ -41,7 +31,7 @@ if __name__ == '__main__':
     clean_cols = list(clean_cols_ids.keys())
     dict_path = get_path(r_settings['PATH'], dict_setting['folder'])
 
-    # get dictionary files from folde
+    # get dictionary files from folder
     dict_files = get_dir_content(dict_path)
     sample_dict = next(dict_files)
     file = sample_dict
