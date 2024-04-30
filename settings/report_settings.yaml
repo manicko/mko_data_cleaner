@@ -1,5 +1,5 @@
 {
-  'PATH': 'data/banks/',
+  'PATH': 'data/snacks/',
   'DATA_FILES_SETTINGS': {
     'folder': 'raw_data',
     'ext': 'gz', # data files'  extension

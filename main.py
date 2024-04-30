@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 from pathlib import Path
 from functools import partial
@@ -24,12 +26,10 @@ DATA_TO_SQL_PARAMS = {
     'chunksize': 2000
 }
 
-REPORT_SETTINGS = 'settings/report_settings.yaml'
 
-if __name__ == '__main__':
-
+def main(report_settings_file: str | os.PathLike):
     # read report settings
-    r_settings = yaml_to_dict(REPORT_SETTINGS)
+    r_settings = yaml_to_dict(report_settings_file)
     dict_setting = r_settings['DICT_FILE_SETTINGS']
     data_settings = r_settings['DATA_FILES_SETTINGS']
     db_settings = r_settings['DATABASE_SETTINGS']
@@ -125,3 +125,8 @@ if __name__ == '__main__':
         **export_settings['to_csv']
     )
     db_connection.close()
+
+
+if __name__ == '__main__':
+    REPORT_SETTINGS = 'settings/report_settings.yaml'
+    main(REPORT_SETTINGS)

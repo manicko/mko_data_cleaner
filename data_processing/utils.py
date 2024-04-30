@@ -34,10 +34,11 @@ def get_dir_content(*folder, ext: str = 'csv'):
 
 
 def yaml_to_dict(file: str):
-    with open(file, "r", encoding="utf8") as stream:
-        try:
+    try:
+        with open(file, "r", encoding="utf8") as stream:
             data = yaml.safe_load(stream)
-        except yaml.YAMLError as exc:
-            print(exc)
-        else:
-            return data
+    except (FileNotFoundError, yaml.YAMLError) as exc:
+        print(exc)
+        raise exc
+    else:
+        return data
