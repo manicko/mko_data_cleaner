@@ -6,13 +6,7 @@ from functools import partial
 from time import time
 import sqlite3
 
-from data_processing.cleaner import (
-    create_search_table,
-    search_update_query,
-    finalize,
-    get_csv_columns,
-    csv_to_search_table
-)
+from data_processing.db_woker import DBWorker
 from data_processing.utils import (
     yaml_to_dict,
     get_path,
