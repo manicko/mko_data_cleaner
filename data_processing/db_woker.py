@@ -6,7 +6,7 @@ from typing import (Any, List, Optional, Union)
 
 from pathlib import Path
 
-from .utils import is_valid_name
+from .utils import clean_names
 
 # # DB table keeping schema
 MASTER_TABLE = 'sqlite_master'
@@ -38,14 +38,13 @@ class DBWorker:
         :param tbl_columns: str, list of column names
         :return: bool, True or False depending on the operation success
         """
+        tbl_name, *tbl_columns = clean_names(tbl_name, *tbl_columns)
+        query = f"CREATE TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
+        self.perform_query(query)
+        print(f'Table \'{tbl_name}\' created successfully')
 
-        if is_valid_name(tbl_name, *tbl_columns):
-            query = f"CREATE TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
-            self.perform_query(query)
-            print(f'Table \'{tbl_name}\' created successfully')
-        else:
-            print(f'Table \'{tbl_name}\' could not be created. Check names {tbl_name, *tbl_columns}')
-        return False
+
+
 
     def perform_query(self, query: str, *term: tuple[str]):
         try:
@@ -128,10 +127,10 @@ class DBWorker:
         :param tbl_name: str, name of a table to add columns
         :return: :bool, status True or False as value
         """
-        if is_valid_name(col_name) and col_type.upper() in VALID_COLUMN_DTYPES:
-            query = f"ALTER TABLE {tbl_name} ADD {col_name} {col_type};"
-            self.perform_query(query)
-            print(f"Column '{col_name}' was successfully created in '{tbl_name}'")
+        col_name = clean_names(col_name)
+        query = f"ALTER TABLE {tbl_name} ADD {col_name} {col_type.upper()};"
+        self.perform_query(query)
+        print(f"Column '{col_name}' was successfully created in '{tbl_name}'")
 
     def add_columns(self, tbl_name: str, **col_params: dict[str:str]):
         """
@@ -157,13 +156,13 @@ class DBWorker:
         :return: bool, True if operation succeeded
         """
         search_tbl = tbl_name + suffix
-        if is_valid_name(search_tbl, *search_columns):
-            # ensure that there are no table with the same name
-            query = f"CREATE VIRTUAL TABLE IF NOT EXISTS {search_tbl} " \
-                    f"USING fts5({','.join(search_columns)}, content={tbl_name})"
-            self.perform_query(query)
-            print(f"Search table '{search_tbl}' was successfully created")
-            self.create_triggers(tbl_name, search_tbl, suffix, search_columns)
+        search_tbl, *search_columns = clean_names(search_tbl, *search_columns)
+        # ensure that there are no table with the same name
+        query = f"CREATE VIRTUAL TABLE IF NOT EXISTS {search_tbl} " \
+                f"USING fts5({','.join(search_columns)}, content={tbl_name})"
+        self.perform_query(query)
+        print(f"Search table '{search_tbl}' was successfully created")
+        self.create_triggers(tbl_name, search_tbl, suffix, search_columns)
 
     def create_triggers(self, tbl_name, search_tbl, suffix, search_columns):
         columns = ','.join(search_columns)
@@ -223,7 +222,7 @@ class DBWorker:
         # create empty datatable
         self.create_table(data_table, *col_names, *clean_columns)
         # create empty database for FTS search
-        self.link_search_table(data_table, search_columns)
+        self.link_search_table(data_table, *search_columns)
         print(f'Datatable: {data_table} successfully created')
 
     def data_chunk_to_sql(self,

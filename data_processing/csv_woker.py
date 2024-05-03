@@ -1,14 +1,13 @@
-from typing import (Any, List, Optional, Union)
+import os
+from typing import (Optional)
 from pathlib import Path
 import logging
 import traceback
-import time
+from time import time, strftime
 import pandas as pd
 
 from .utils import (
-    get_dir_content,
-    read_csv_chunks
-
+    get_dir_content
 )
 
 
@@ -51,6 +50,7 @@ class CSVWorker:
             with pd.read_csv(
                     filepath_or_buffer=csv_file,
                     names=headers,
+                    chunksize=10000,
                     **self.reader_settings
             ) as csv_data_reader:
                 for data_chunk in csv_data_reader:
@@ -65,27 +65,47 @@ class CSVWorker:
         :return: Pandas data chunk
         """
         file = self.sample_data_file
-        d = self.reader_settings.copy()
-        print(f'Reading file: {file}')
-        d['names'] = col_names
-        d['filepath_or_buffer'] = file
-        return read_csv_chunks(**d)
-        # # x = self.get_chunk_from_csv(csv_file=file, headers=col_names)
-        # print(x)
-        # for d in x:
-        #     yield d
-        # # while file:
-        #
-        #     file = (next(self.data_files), False)
+        while file:
+            print(f'Reading file: {file}')
+            yield from self.get_chunk_from_csv(csv_file=file, headers=col_names)
+            file = next(self.data_files, False)
 
     def get_file_name(self, name_prefix, name_suffix):
         ext = ''
-        time_str = time.strftime("%Y%m%d-%H%M%S")
+        time_str = strftime("%Y%m%d-%H%M%S")
         if 'compression' in self.export_settings and 'method' in self.export_settings['compression']:
             ext = '.' + self.export_settings['compression']['method']
             ext = ext.replace('.gzip', '.gz')
         output_file = f'{name_prefix}_{time_str}_{name_suffix}.csv{ext}'
         return output_file
+
+    def get_clean_params(self, dict_path: str | os.PathLike, actions: dict, clean_cols_ids: dict):
+        # read cleaning settings from the dictionary
+        try:
+            clean_params_df = pd.read_csv(
+                filepath_or_buffer=dict_path,
+                usecols=list(actions.values()) + list(clean_cols_ids.values()),
+                names=list(actions.keys()) + list(clean_cols_ids.keys()),
+                **self.reader_settings
+            )
+            # separate update settings and loop through
+            upd_params_df = clean_params_df.loc[clean_params_df['action'] == 'upd']
+
+            # looping through dictionary by column
+            # if there are values to be set in that column (not empty rows)
+            # we pass all nonempty rows to cleaner
+            print(f'Data cleaning in progress: [', end='')
+            start_time = time()
+            for col_name in clean_cols_ids.keys():
+                rs = upd_params_df.loc[upd_params_df[col_name].notnull(), [col_name] + ['term']]
+                yield rs.values.tolist()
+                print('==', end='')
+        except Exception as err:
+            logging.error(traceback.format_exc())
+            raise err
+        else:
+            print(']')
+            print(f"Data cleaning finished. Elapsed time: {time() - start_time:.2f} seconds")
 
     def export_sql_to_csv(self,
                           db_con,
@@ -101,11 +121,7 @@ class CSVWorker:
         connections are closed automatically. See
         `here <https://docs.sqlalchemy.org/en/13/core/connections.html>`_.
         :param data_table: str, name of the table to be exported
-        :param to_csv_params: Optional[Any], use to update global CSV_EXPORT_PARAMS
-        :param file_path: path to the CSV files storage
         :param file_prefix: Name of the output file to be used
-        :param to_csv_params: dict, settings for Pandas' CSV export
-        :return: bool, True or False depending on the operation success
         """
 
         # define base settings for pandas to_CSV

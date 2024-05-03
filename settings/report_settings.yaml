@@ -4,16 +4,7 @@
     'folder': 'raw_data',
     'ext': 'gz', # data files'  extension
     #'file_name': 'parfiumeriia_2023-02-01_2023-02-28_20240106_143305.csv',
-    'search_cols': [ # columns in the data table to be used for search
-      'col_2',
-      'col_3',
-      'col_4',
-      'col_5',
-      'col_6',
-      'col_7',
-      'col_8',
-      'col_9'
-    ]
+    'search_cols': [ 2,3, 4, 5, 6, 7, 8, 9 ]
   },
   'DICT_FILE_SETTINGS': {
     'folder': 'dict',
