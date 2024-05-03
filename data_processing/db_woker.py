@@ -1,11 +1,11 @@
 import traceback
 import logging
 import sqlite3
-from sqlite3 import Connection
+
 from typing import (Any, List, Optional, Union)
-import pandas as pd
+
 from pathlib import Path
-import time
+
 from .utils import is_valid_name
 
 # # DB table keeping schema
@@ -20,9 +20,15 @@ VALID_COLUMN_DTYPES = (
     'BLOB'
 )
 
+DATA_TO_SQL_PARAMS = {
+    'if_exists': 'append',
+    'index': False,
+    'index_label': None,
+    'chunksize': 2000
+}
 
 class DBWorker:
-    def __init__(self, db_file, tbl_name: str):
+    def __init__(self, db_file, tbl_name: str = 'data_table'):
         self.db_con = sqlite3.connect(db_file)
         self.db_table = tbl_name
 
@@ -198,18 +204,6 @@ class DBWorker:
 
         print(f"Search triggers were successfully created for '{search_tbl}' ")
 
-    @staticmethod
-    def generate_column_names(col_num: int, prefix: str = 'col_') -> list:
-        """
-        Generates list of names in a form of {prefix} + {index}.
-        i.e. col_0, col_1 etc.
-        :param col_num: str, number of columns
-        :param prefix: str, prefix to use before index
-        :return: list, list of column names
-        """
-        col_names = [prefix + str(i) for i in range(col_num)]
-        return col_names
-
     def create_search_table(self,
                             data_table: str,
                             search_columns: list[str],
@@ -232,43 +226,22 @@ class DBWorker:
         self.link_search_table(data_table, search_columns)
         print(f'Datatable: {data_table} successfully created')
 
-    def csv_to_search_table(self,
-                            data_table: str,
-                            col_names: list[str],
-                            csv_file: Union[str, Path],
-                            csv_reader_settings: dict[str, Any],
-                            sql_loader_settings: dict[str, Any]
-                            ) -> int:
+    def data_chunk_to_sql(self,
+                          chunk,
+                          data_table,
+                          sql_loader_settings: dict[str, Any] = {}
+                          ) -> int:
         """
         :param data_table:
-        :param col_names:
-        :param csv_file: pathstring to CSV file
-        :param csv_reader_settings: use to override global CSV_READ_PARAMS
-            for details refer to pandas CSV reader settings
-            https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
+        :param chunk: chunk of data as Panda's object
         :param sql_loader_settings:use to extend or override global CSV_READ_PARAMS
             for details refer to pandas to_sql settings
         :return: int, number of rows loaded to database
         """
-        if Path.is_file(Path(csv_file)) is False:
-            raise NameError(f"File: '{csv_file}' not found")
-
-        # copy and update settings for pandas CSV reader
-        csv_read_params = csv_reader_settings.copy()
-        csv_read_params['filepath_or_buffer'] = csv_file
-        num_cols = count_csv_columns(**csv_read_params)
-        if num_cols != len(col_names):
-            print(f"Number of columns in the file:{num_cols} does not correspond to sample file: {len(col_names)}")
-        # create CSV data reader
-        csv_read_params.setdefault('chunksize', 5000)
-        data_reader = read_csv_chunks(**csv_read_params, names=col_names)
-
-        # load DATA to SQLight from CSV data reader
-        rows_count = 0  # counter for data rows in CSV file
-        for chunk in data_reader:  # loop through CSV file
-            chunk.to_sql(**sql_loader_settings, name=data_table, con=self.db_con)  # load data
-            rows_count += chunk.shape[0]  # count rows
-        return rows_count
+        if not sql_loader_settings:
+            sql_loader_settings = DATA_TO_SQL_PARAMS
+        chunk.to_sql(**sql_loader_settings, name=data_table, con=self.db_con)  # load data
+        return chunk.shape[0]
 
     def finalize(self,
                  data_table: str,
@@ -507,4 +480,5 @@ class DBWorker:
         except sqlite3.Error:
             logging.error(traceback.format_exc())
 
-
+    def __del__(self):
+        self.db_con.close()

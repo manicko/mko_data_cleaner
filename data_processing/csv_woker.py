@@ -1,21 +1,97 @@
 from typing import (Any, List, Optional, Union)
-import pandas as pd
 from pathlib import Path
-import time
 import logging
 import traceback
+import time
+import pandas as pd
+
+from .utils import (
+    get_dir_content,
+    read_csv_chunks
+
+)
 
 
 class CSVWorker:
-    def __init__(self):
-        pass
+    def __init__(self, data_path, data_settings, reader_settings, export_path, export_settings):
+        self.data_settings = data_settings
+        self.export_path = export_path
+        self.reader_settings = reader_settings
+        self.export_settings = export_settings
+
+        self.data_files = get_dir_content(data_path, ext=self.data_settings.get('ext', 'csv'))
+        self.sample_data_file = next(self.data_files)
+        self.csv_headers = self.get_csv_headers(self.sample_data_file)
+
+    def get_csv_headers(self, file) -> list:
+        """Counts columns with data in CSV file
+        https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
+        :return: integer count of columns with data
+        """
+        # get current settings
+        try:
+            cur_rows = None
+            if 'nrows' in self.reader_settings:
+                cur_rows = self.reader_settings.pop('nrows')
+            csv_column_names = pd.read_csv(filepath_or_buffer=file, nrows=0, **self.reader_settings).columns.tolist()
+        except pd.errors.DataError as err:
+            logging.error(traceback.format_exc())
+            raise err
+        else:
+            if cur_rows is not None:
+                self.reader_settings['nrows'] = cur_rows
+            return csv_column_names
+
+    def get_chunk_from_csv(self, csv_file, headers) -> iter:
+        """
+        Generator to read data from CSV file in chunks
+        :return: iterator
+        """
+        try:
+            with pd.read_csv(
+                    filepath_or_buffer=csv_file,
+                    names=headers,
+                    **self.reader_settings
+            ) as csv_data_reader:
+                for data_chunk in csv_data_reader:
+                    yield data_chunk
+        except pd.errors.DataError as err:
+            logging.error(traceback.format_exc())
+            raise err
+
+    def get_csv_chunks(self, col_names: list[str]):
+        """
+        :param col_names:
+        :return: Pandas data chunk
+        """
+        file = self.sample_data_file
+        d = self.reader_settings.copy()
+        print(f'Reading file: {file}')
+        d['names'] = col_names
+        d['filepath_or_buffer'] = file
+        return read_csv_chunks(**d)
+        # # x = self.get_chunk_from_csv(csv_file=file, headers=col_names)
+        # print(x)
+        # for d in x:
+        #     yield d
+        # # while file:
+        #
+        #     file = (next(self.data_files), False)
+
+    def get_file_name(self, name_prefix, name_suffix):
+        ext = ''
+        time_str = time.strftime("%Y%m%d-%H%M%S")
+        if 'compression' in self.export_settings and 'method' in self.export_settings['compression']:
+            ext = '.' + self.export_settings['compression']['method']
+            ext = ext.replace('.gzip', '.gz')
+        output_file = f'{name_prefix}_{time_str}_{name_suffix}.csv{ext}'
+        return output_file
 
     def export_sql_to_csv(self,
                           db_con,
                           data_table: str,
-                          file_path: str = None,
                           file_prefix: Optional[str] = None,
-                          **to_csv_params: Optional[Any]) -> bool:
+                          ):
         """
         Exports SQLights data_table using pandas. Output filename will have timestamp.
         :param db_con: SQLAlchemy connectable, str, or sqlite3 connection
@@ -32,88 +108,32 @@ class CSVWorker:
         :return: bool, True or False depending on the operation success
         """
 
-        if Path.is_dir(Path(file_path)) is False:
-            print(f"Directory '{file_path}' is not a proper file path directory for CSV export")
-            return False
-        if file_prefix is None:
-            file_prefix = data_table
-        time_str = time.strftime("%Y%m%d-%H%M%S")
-
         # define base settings for pandas to_CSV
 
         try:
-            params = to_csv_params.copy()
-            max_file_rows = params.pop('chunksize', 10000)
-            row_counter = 0
-            file_index = 0
-            print(f'Data writing in progress:')
-            ext = ''
-            if 'compression' in to_csv_params and 'method' in to_csv_params['compression']:
-                ext = '.' + to_csv_params['compression']['method']
-                ext = ext.replace('.gzip', '.gz')
-            # if used with zip chunksize MUST be the same as max_file_rows
+            file_prefix = file_prefix if file_prefix else data_table
+            file_name = self.get_file_name(file_prefix, '{file_index}')
+
+            params = self.export_settings.copy()
+            # if used with zip sql_chunk_size MUST be the same as max_file_rows
             # due to the bug in Pandas module
-            output_file_name = Path(file_path, f'{file_prefix}_{time_str}_{str(file_index)}.csv{ext}')
-            for data_chunk in pd.read_sql(f'SELECT * FROM {data_table}', db_con, chunksize=5000):
+            max_file_rows = params.pop('chunksize', 10000)
+            sql_chunk_size = 5000
+            row_counter = 0
+            file_index = 1
+            file = Path(self.export_path, file_name.format(file_index=str(file_index)))
+            print(f'Data writing in progress:')
+            for data_chunk in pd.read_sql(f'SELECT * FROM {data_table}', db_con, chunksize=sql_chunk_size):
                 row_counter += len(data_chunk.index)
                 if row_counter > max_file_rows * file_index:
                     file_index += 1
                     params['header'] = True  # turn on headers for a new file
-                    output_file_name = Path(file_path, f'{file_prefix}_{time_str}_{str(file_index)}.csv{ext}')
-                data_chunk.to_csv(path_or_buf=output_file_name, **params)
+                    file = Path(self.export_path, file_name.format(file_index=str(file_index)))
+                data_chunk.to_csv(path_or_buf=file, **params)
                 params['header'] = False  # turn of headers if continue
                 print(f'{row_counter:,} rows', end='\r')
 
-            print(f"{row_counter:,} data rows were successfully exported to: {output_file_name}")
-            return True
-        except pd.errors.DataError:
+            print(f"{row_counter:,} data rows were successfully exported to: {self.export_path}")
+        except pd.errors.DataError as err:
             logging.error(traceback.format_exc())
-
-    def count_csv_columns(**reader_settings) -> int:
-        """Counts columns with data in CSV file
-        :param reader_settings: uses pandas csv_reader settings
-        https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
-        :return: integer count of columns with data
-        """
-        reader_settings['nrows'] = 0  # override to read header row only
-        try:
-            csv_column_names = pd.read_csv(**reader_settings).columns.tolist()
-            return len(csv_column_names)
-        except pd.errors.DataError:
-            logging.error(traceback.format_exc())
-
-    def read_csv_chunks(**reader_settings) -> iter:
-        """
-        Generator to read data from CSV file in chunks
-        :param reader_settings: dict, use pandas reader params
-        :return: iterator
-        """
-        try:
-            with pd.read_csv(**reader_settings) as csv_data_reader:
-                for data_chunk in csv_data_reader:
-                    yield data_chunk
-        except pd.errors.DataError:
-            logging.error(traceback.format_exc())
-
-    def get_csv_columns(csv_reader_settings: dict[str, Any], sample_csv_file: Union[str, Path]) -> list[str]:
-        """
-
-        :param sample_csv_file: pathstring to CSV file
-        :param csv_reader_settings: use to override global CSV_READ_PARAMS
-            for details refer to pandas CSV reader settings
-            https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
-
-        :return:
-        """
-        if Path.is_file(Path(sample_csv_file)) is False:
-            raise NameError(f"File: '{sample_csv_file}' not found")
-
-        # copy and update settings for pandas CSV reader
-        csv_read_params = csv_reader_settings.copy()
-        csv_read_params['filepath_or_buffer'] = sample_csv_file
-
-        # get columns count from CSV to reserve same number of columns in SQLight table
-        num_cols = count_csv_columns(**csv_read_params)
-        # generate column names to use for loader
-        col_names = generate_column_names(num_cols)
-        return col_names
+            raise err

@@ -1,22 +1,22 @@
 from pathlib import Path
 import yaml
-import traceback
 import logging
-
 
 class ReportConfig:
     def __init__(self, report_settings_file):
         self.report_settings = self.yaml_to_dict(report_settings_file)
+
         self.dict_setting = self.report_settings['DICT_FILE_SETTINGS']
         self.data_settings = self.report_settings['DATA_FILES_SETTINGS']
-        self.db_settings = self.report_settings['DATABASE_SETTINGS']
         self.export_settings = self.report_settings['EXPORT_SETTINGS']
-        self.reader_settings = self.report_settings['READ_SETTINGS']
+        self.reader_settings = self.report_settings['READ_SETTINGS']['from_csv']
+        self.db_settings = self.report_settings['DATABASE_SETTINGS']
 
         self.import_path = None
         self.export_path = None
         self.db_file = None
         self.dict_path = None
+        self.set_working_paths()
 
         # DB connection
         table_name = self.db_settings['table_name']
@@ -35,11 +35,19 @@ class ReportConfig:
             print(f"Data folder with path: '{work_dir}' is not found")
             logging.error(f"Data folder with path: '{work_dir}' is not found")
             exit()
-
+        # path with data files
         self.import_path = Path(work_dir, self.data_settings['folder'])
+
+        # path to extract clean data
         self.export_path = Path(work_dir, self.export_settings['folder'])
         self.export_path.mkdir(parents=True, exist_ok=True)
-        self.dict_path = Path(work_dir, self.dict_setting['folder'], self.dict_setting['file_name'])
+
+        # path to cleaning dictionary
+        self.dict_path = Path(work_dir, self.dict_setting['folder'])
+        if self.dict_setting['file_name']:
+            self.dict_path = Path(work_dir, self.dict_setting['folder'])
+
+        # path to database file
         db_path = Path(work_dir, self.db_settings['folder'])
         db_path.mkdir(parents=True, exist_ok=True)
         self.db_file = Path(db_path, self.db_settings['file_name'] + '.db')
@@ -54,25 +62,3 @@ class ReportConfig:
             raise exc
         else:
             return data
-
-
-def get_path(*path: str, mkdir: bool = False):
-    path = Path(*path)
-    if mkdir is True:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-        except FileNotFoundError as err:
-            raise FileNotFoundError(f"File or folder with path: '{path}' is not found", err)
-
-    if path.exists() is False:
-        try:
-            root_dir = Path().absolute()
-            from_root = Path.joinpath(root_dir, path)
-            if from_root.exists() is False:
-                raise NameError(f"File or folder with path: '{path}' is not found")
-        except NameError:
-            raise NameError(f"File or folder with path: '{path}' is not found")
-        else:
-            return from_root
-    else:
-        return path
