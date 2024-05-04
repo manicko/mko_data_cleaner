@@ -90,7 +90,7 @@ class CSVWorker:
                 dict_data = pd.read_csv(filepath_or_buffer=file, **self.reader_settings)
                 # dict_data['file'] = file.stem
                 dict_list.append(dict_data)
-                print(f"'{file}' was loaded'")
+                # print(f"'{file}' was loaded")
             df = pd.concat(dict_list, ignore_index=True)
             df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
             df.sort_values(by=['search_column_idx'], ascending=True, inplace=True)
