@@ -16,7 +16,7 @@ def main(report_settings_file: str | os.PathLike):
         data_settings=report_config.data_settings,
         reader_settings=report_config.reader_settings,
         dict_path=report_config.dict_path,
-        dict_settings=report_config.dict_setting,
+        dict_settings=report_config.dict_settings,
         export_path=report_config.export_path,
         export_settings=report_config.export_settings
     )
@@ -26,8 +26,8 @@ def main(report_settings_file: str | os.PathLike):
     # get dictionary params
     search_cols_index = get_names_index(sample_data_headers, report_config.data_settings['search_cols'])
     search_cols = list(search_cols_index.values())
-    actions = report_config.dict_setting['actions']
-    clean_cols_ids = report_config.dict_setting['clean_cols_ids']
+    actions = report_config.dict_settings['actions']
+    clean_cols_ids = report_config.dict_settings['clean_cols_ids']
     clean_cols = list(clean_cols_ids.keys())
 
     # DB settings

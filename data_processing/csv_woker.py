@@ -86,7 +86,7 @@ class CSVWorker:
     def get_merged_dictionary(self):
         try:
             dict_list = []
-            for file in get_dir_content(self.dict_path.parent):
+            for file in get_dir_content(self.dict_path.parent, self.dict_settings['ext']):
                 dict_data = pd.read_csv(filepath_or_buffer=file, **self.reader_settings)
                 # dict_data['file'] = file.stem
                 dict_list.append(dict_data)
