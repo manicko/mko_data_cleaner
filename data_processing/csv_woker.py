@@ -123,10 +123,11 @@ class CSVWorker:
             start_time = time()
             for col_name in clean_cols_ids.keys():
                 rs = upd_params_df.loc[upd_params_df[col_name].notnull(), [col_name] + ['search_column_idx'] + ['term']]
+                rs['search_column_idx'] = rs['search_column_idx'].apply(pd.to_numeric)
                 rs = rs.values.tolist()
                 result = []
                 for col, search_id, term in rs:
-                    term = '"' + search_column_index[search_id] + '":' + term
+                    term = '"' + search_column_index[int(search_id)] + '":' + term
                     result.append([col, term])
                 yield col_name, result
                 print('==', end='')

@@ -40,7 +40,7 @@
       'encoding': 'utf-8',
       'index_col': False,
       'skiprows': Null,
-      'decimal': '.',
+      'decimal': ',',
       'header': 0  # ignor column names in CSV file
     }
   },
