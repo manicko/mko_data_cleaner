@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import yaml
 import logging
@@ -9,26 +10,15 @@ class ReportConfig:
 
         self.dict_setting = self.report_settings['DICT_FILE_SETTINGS']
         self.data_settings = self.report_settings['DATA_FILES_SETTINGS']
-        self.export_settings = self.report_settings['EXPORT_SETTINGS']
+        self.export_settings = self.report_settings['EXPORT_SETTINGS']['to_csv']
         self.reader_settings = self.report_settings['READ_SETTINGS']['from_csv']
         self.db_settings = self.report_settings['DATABASE_SETTINGS']
 
-        self.import_path = None
-        self.export_path = None
-        self.db_file = None
-        self.dict_path = None
+        self.import_path: str | os.PathLike | None = None
+        self.export_path: str | os.PathLike | None = None
+        self.db_file: str | os.PathLike | None = None
+        self.dict_path: str | os.PathLike | None = None
         self.set_working_paths()
-
-        # DB connection
-        table_name = self.db_settings['table_name']
-
-        # set dictionary params
-        search_cols = self.data_settings['search_cols']
-        actions = self.dict_setting['actions']
-        clean_cols_ids = self.dict_setting['clean_cols_ids']
-        clean_cols = list(clean_cols_ids.keys())
-
-        # get data folder and files
 
     def set_working_paths(self):
         work_dir = Path(self.report_settings['PATH']).resolve()
@@ -40,13 +30,11 @@ class ReportConfig:
         self.import_path = Path(work_dir, self.data_settings['folder'])
 
         # path to extract clean data
-        self.export_path = Path(work_dir, self.export_settings['folder'])
+        self.export_path = Path(work_dir, self.report_settings['EXPORT_SETTINGS']['folder'])
         self.export_path.mkdir(parents=True, exist_ok=True)
 
         # path to cleaning dictionary
-        self.dict_path = Path(work_dir, self.dict_setting['folder'])
-        if self.dict_setting['file_name']:
-            self.dict_path = Path(self.dict_path, self.dict_setting['file_name'])
+        self.dict_path = Path(work_dir, self.dict_setting['folder'], self.dict_setting['file_name'])
 
         # path to database file
         db_path = Path(work_dir, self.db_settings['folder'])

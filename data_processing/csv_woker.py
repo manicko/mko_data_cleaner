@@ -12,11 +12,15 @@ from .utils import (
 
 
 class CSVWorker:
-    def __init__(self, data_path, data_settings, reader_settings, export_path, export_settings):
+    def __init__(self, data_path: str | os.PathLike, data_settings: dict, reader_settings: dict,
+                 dict_path: str | os.PathLike, dict_settings: dict,
+                 export_path: str | os.PathLike, export_settings: dict):
         self.data_settings = data_settings
-        self.export_path = export_path
+        self.export_path = Path(export_path)
         self.reader_settings = reader_settings
         self.export_settings = export_settings
+        self.dict_path = Path(dict_path)
+        self.dict_settings = dict_settings
 
         self.data_files = get_dir_content(data_path, ext=self.data_settings.get('ext', 'csv'))
         self.sample_data_file = next(self.data_files)
@@ -79,42 +83,25 @@ class CSVWorker:
         output_file = f'{name_prefix}_{time_str}_{name_suffix}.csv{ext}'
         return output_file
 
-    def get_merged_dictionary(self, r_settings):
-        # read report settings
-        dict_setting = r_settings['DICT_FILE_SETTINGS']
-        data_settings = r_settings['DATA_FILES_SETTINGS']
-        reader_settings = r_settings['READ_SETTINGS']
-
-        # set dictionary params
-
-        actions = dict_setting['actions']
-        clean_cols_ids = dict_setting['clean_cols_ids']
-        clean_cols = list(clean_cols_ids.keys())
-        dict_path = get_path(r_settings['PATH'], dict_setting['folder'])
-
-        # get dictionary files from folder
-        dict_files = get_dir_content(dict_path)
-        sample_dict = next(dict_files)
-        file = sample_dict
-        dict_list = []
-        while file:
-            dict_data = pd.read_csv(
-                filepath_or_buffer=file,
-                **reader_settings['from_csv']
-            )
-            # dict_data['file'] = file.stem
-            dict_list.append(dict_data)
-            print(f"'{file}' was loaded'")
-            file = next(dict_files, False)
-
-        df = pd.concat(dict_list, ignore_index=True)
-        out_dict_path = Path(dict_path, 'merged_dictionary.csv')
-        df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
-        df.sort_values(by=['search_column_idx'], ascending=True, inplace=True)
-        df.to_csv(path_or_buf=out_dict_path, encoding='UTF-8', sep=';', index=False)
+    def get_merged_dictionary(self):
+        try:
+            dict_list = []
+            for file in get_dir_content(self.dict_path.parent):
+                dict_data = pd.read_csv(filepath_or_buffer=file, **self.reader_settings)
+                # dict_data['file'] = file.stem
+                dict_list.append(dict_data)
+                print(f"'{file}' was loaded'")
+            df = pd.concat(dict_list, ignore_index=True)
+            df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
+            df.sort_values(by=['search_column_idx'], ascending=True, inplace=True)
+            df.to_csv(path_or_buf=self.dict_path, encoding='UTF-8', sep=';', index=False)
+        except Exception as err:
+            logging.error(traceback.format_exc())
+            raise err
+        else:
+            print(f"Merged dictionary file: '{self.dict_path}' was successfully created")
 
     def get_clean_params(self,
-                         dict_path: str | os.PathLike,
                          clean_cols_ids: dict,
                          search_column_index: dict[int:str],
                          actions: dict | None = None
@@ -122,7 +109,7 @@ class CSVWorker:
         # read cleaning settings from the dictionary
         try:
             clean_params_df = pd.read_csv(
-                filepath_or_buffer=dict_path,
+                filepath_or_buffer=self.dict_path,
                 # usecols=list(actions.values()) + list(clean_cols_ids.values()),
                 # names=list(actions.keys()) + list(clean_cols_ids.keys()),
                 **self.reader_settings

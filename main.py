@@ -15,8 +15,10 @@ def main(report_settings_file: str | os.PathLike):
         data_path=report_config.import_path,
         data_settings=report_config.data_settings,
         reader_settings=report_config.reader_settings,
+        dict_path=report_config.dict_path,
+        dict_settings=report_config.dict_setting,
         export_path=report_config.export_path,
-        export_settings=report_config.export_settings['to_csv']
+        export_settings=report_config.export_settings
     )
 
     sample_data_headers = clean_names(*csv_worker.csv_headers)
@@ -47,9 +49,11 @@ def main(report_settings_file: str | os.PathLike):
 
     print(f"{rows_count:,} rows were loaded to '{table_name}'")
 
+    if not os.path.isfile(report_config.dict_path):
+        csv_worker.get_merged_dictionary()
+
     # generate parameters to search and update columns
     params = csv_worker.get_clean_params(
-        dict_path=report_config.dict_path,
         actions=actions,
         clean_cols_ids=clean_cols_ids,
         search_column_index=search_cols_index
@@ -69,5 +73,6 @@ def main(report_settings_file: str | os.PathLike):
 
 
 if __name__ == '__main__':
+
     REPORT_SETTINGS = 'settings/report_settings.yaml'
     main(REPORT_SETTINGS)

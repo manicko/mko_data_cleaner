@@ -8,6 +8,7 @@
   },
   'DICT_FILE_SETTINGS': {
     'folder': 'dict',
+    'ext': 'csv',
     'file_name': 'merged_dictionary.csv',
     'actions': { # columns' indexes in the file_search containing settings
       'action': 0,  # update or delete setting
@@ -30,7 +31,7 @@
   'DATABASE_SETTINGS': {
     folder: 'data_base',
     file_name: 'db_example',
-    table_name: 'd_table'
+    table_name: 'data_table'
   },
   'READ_SETTINGS': { # general settings for pandas CSV reader
     'from_csv': {
