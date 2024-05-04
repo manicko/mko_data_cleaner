@@ -13,9 +13,9 @@ DATA_TO_SQL_PARAMS = {
 }
 
 
-def get_names_by_index(names: list[str], index: list[int]) -> list[str]:
+def get_names_index(names: list[str], index: list[int]) -> dict[int:str]:
     index = list(map(int, index))
-    return [names[i] for i in index]
+    return {i: names[i] for i in index}
 
 
 def is_valid_name(name: str, pattern: str = ALLOWED_PATTERN) -> bool:

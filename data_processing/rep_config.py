@@ -2,6 +2,7 @@ from pathlib import Path
 import yaml
 import logging
 
+
 class ReportConfig:
     def __init__(self, report_settings_file):
         self.report_settings = self.yaml_to_dict(report_settings_file)
@@ -45,7 +46,7 @@ class ReportConfig:
         # path to cleaning dictionary
         self.dict_path = Path(work_dir, self.dict_setting['folder'])
         if self.dict_setting['file_name']:
-            self.dict_path = Path(work_dir, self.dict_setting['folder'])
+            self.dict_path = Path(self.dict_path, self.dict_setting['file_name'])
 
         # path to database file
         db_path = Path(work_dir, self.db_settings['folder'])

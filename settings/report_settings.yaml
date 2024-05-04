@@ -30,7 +30,7 @@
   'DATABASE_SETTINGS': {
     folder: 'data_base',
     file_name: 'db_example',
-    table_name: 'data_table'
+    table_name: 'd_table'
   },
   'READ_SETTINGS': { # general settings for pandas CSV reader
     'from_csv': {

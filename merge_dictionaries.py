@@ -7,13 +7,6 @@ from data_processing.utils import (
     get_dir_content
 )
 
-DATA_TO_SQL_PARAMS = {
-    'if_exists': 'append',
-    'index': False,
-    'index_label': None,
-    'chunksize': 2000
-}
-
 REPORT_SETTINGS = 'settings/report_settings.yaml'
 
 if __name__ == '__main__':

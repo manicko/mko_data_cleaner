@@ -1,11 +1,9 @@
 import traceback
 import logging
 import sqlite3
-
 from typing import (Any, List, Optional, Union)
-
 from pathlib import Path
-
+import os
 from .utils import clean_names
 
 # # DB table keeping schema
@@ -27,9 +25,11 @@ DATA_TO_SQL_PARAMS = {
     'chunksize': 2000
 }
 
+
 class DBWorker:
     def __init__(self, db_file, tbl_name: str = 'data_table'):
-        self.db_con = sqlite3.connect(db_file)
+        self.db_file = db_file
+        self.db_con = sqlite3.connect(self.db_file)
         self.db_table = tbl_name
 
     def create_table(self, tbl_name, *tbl_columns: str) -> bool:
@@ -42,9 +42,6 @@ class DBWorker:
         query = f"CREATE TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
         self.perform_query(query)
         print(f'Table \'{tbl_name}\' created successfully')
-
-
-
 
     def perform_query(self, query: str, *term: tuple[str]):
         try:
@@ -242,36 +239,6 @@ class DBWorker:
         chunk.to_sql(**sql_loader_settings, name=data_table, con=self.db_con)  # load data
         return chunk.shape[0]
 
-    def finalize(self,
-                 data_table: str,
-                 search_suffix: str = '_fts',
-                 export: Optional[bool] = True,
-                 output_folder: Optional[Union[str, Path]] = None,
-                 **export_params: [dict],
-                 ) -> bool:
-        """
-        Export results to the file and drops tables
-        :param data_table: str, name of the table to be dropped
-        :param search_suffix: str, suffix used for the search table
-        :param export: bool, True if export is needed
-        :param output_folder: str, Path to the output directory
-        :param export_params: dict, settings for csv export for Pandas
-        :return: bool, True if succeeded
-        """
-        if export is True:
-            exported = self.export_sql_to_csv(
-                data_table=data_table,
-                file_path=output_folder,
-                **export_params
-            )
-            if exported is False:
-                return False
-        finalised = all((
-            self.drop_triggers(tbl_name=data_table),
-            all(self.drop_tables(data_table, data_table + search_suffix).values())
-        ))
-        return finalised
-
     def get_table_sample(self, tbl_name: str, limit: int = 2):
         """
         :param tbl_name:
@@ -377,46 +344,6 @@ class DBWorker:
     #     except sqlite3.Error:
     #         logging.error(traceback.format_exc())
 
-    #
-    # def search_update_query(db_con: Connection,
-    #                         data_table: str,
-    #                         column: str,
-    #                         value: str,
-    #                         term: str,
-    #                         search_suffix: Optional[str] = '_fts'
-    #                         ) -> bool:
-    #     """
-    #     Updates the specified datatable Column rows with the specified Value
-    #     basing on the search results using Term as a search condition
-    #     :param db_con: SQLight3 connection object
-    #     :param data_table: str, name of the data table
-    #     :param column: str, name of a column to set as Value
-    #     :param value: str, Value to be placed in the updated column
-    #     :param term: str, Search term ising SQLight FTS5 syntax after MATCH
-    #     https://www.sqlite.org/fts5.html#full_text_query_syntax
-    #     :param search_suffix: str, suffix used while creating the search table,
-    #     default is recommended
-    #     :return: bool, True if the operation was successful
-    #     """
-    #     try:
-    #         query = '''
-    #                 UPDATE {table} SET {column} = '{val}'
-    #                 WHERE ROWID IN (
-    #                     SELECT ROWID FROM {table}{search_suffix}
-    #                     WHERE {table}{search_suffix} MATCH ? ORDER BY rank )
-    #                 '''.format(
-    #             table=data_table,
-    #             search_suffix=search_suffix,
-    #             column=column,
-    #             val=value
-    #         )
-    #         db_con.cursor().execute(query, [term])
-    #         db_con.commit()
-    #         db_con.cursor().close()
-    #         return True
-    #     except sqlite3.Error:
-    #         logging.error(traceback.format_exc())
-
     def search_delete_query(self,
                             data_table: str,
                             *term: str,
@@ -462,22 +389,36 @@ class DBWorker:
         default is recommended
         :return: bool, True if the operation was successful
         """
+        query = '''              
+                UPDATE {table} SET {column} = ?
+                WHERE ROWID IN (
+                    SELECT ROWID FROM {table}{search_suffix} 
+                    WHERE {table}{search_suffix} MATCH ? ORDER BY rank )                                   
+                '''.format(
+            table=data_table,
+            search_suffix=search_suffix,
+            column=column
+        )
         try:
-            query = '''              
-                    UPDATE {table} SET {column} = ?
-                    WHERE ROWID IN (
-                        SELECT ROWID FROM {table}{search_suffix} 
-                        WHERE {table}{search_suffix} MATCH ? ORDER BY rank )                                   
-                    '''.format(
-                table=data_table,
-                search_suffix=search_suffix,
-                column=column
-            )
             self.db_con.cursor().executemany(query, params)
             self.db_con.commit()
             self.db_con.cursor().close()
-        except sqlite3.Error:
+        except sqlite3.Error as err:
+            print(f'query = {query}', f'params = {params}', sep='\n')
             logging.error(traceback.format_exc())
+            raise err
+
+    def delete_base_file(self):
+        try:
+            self.db_file.unlink()
+        except Exception as err:
+            logging.error(traceback.format_exc())
+            print(err, f'not able to delete database file {self.db_file}')
+        else:
+            print(f'Data base was purified successfully')
 
     def __del__(self):
+        # self.drop_triggers(tbl_name=data_table),
+        # self.drop_tables(data_table, data_table + search_suffix)
         self.db_con.close()
+        self.delete_base_file()
