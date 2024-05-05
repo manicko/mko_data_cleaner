@@ -4,7 +4,9 @@ from re import match, sub
 
 # pattern used to check validity of column and table name before adding them
 ALLOWED_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
-RESTRICTED_PATTERN = '[!#$%&*+^_`|~@(){}.-]'
+RESTRICTED_PATTERN = r'[#@$%&~*+=<>^`|(){}?!;:,.-\/"]'
+
+
 DATA_TO_SQL_PARAMS = {
     'if_exists': 'append',
     'index': False,
