@@ -1,5 +1,5 @@
 {
-  'PATH': 'data/snacks/',
+  'PATH': 'data/finance/',
   'DATA_FILES_SETTINGS': {
     'folder': 'raw_data',
     'ext': 'gz', # data files'  extension
@@ -48,6 +48,7 @@
     'folder': 'clean_data',
     'to_csv': { # general settings for pandas CSV reader
       'chunksize': 10000,
+      'decimal': ',',
       'sep': ';',
       'encoding': 'UTF-8',
       'mode': 'a',

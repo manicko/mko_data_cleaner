@@ -6,7 +6,6 @@ from re import match, sub
 ALLOWED_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
 RESTRICTED_PATTERN = r'[#@$%&~*+=<>^`|(){}?!;:,.-\/"]'
 
-
 DATA_TO_SQL_PARAMS = {
     'if_exists': 'append',
     'index': False,
@@ -70,9 +69,10 @@ def generate_column_names(col_num: int, prefix: str = 'col_') -> list:
     return col_names
 
 
-def get_dir_content(path: str | PathLike, ext: str = 'csv'):
+def get_dir_content(path: str | PathLike, ext: str = 'yaml', subfolders=True):
     try:
-        files = Path(path).glob(f'*.{ext}')
+        subfolders = '**/' if subfolders else ''
+        files = Path(path).glob(f'{subfolders}*.{ext}')
     except Exception as err:
         raise err
     else:

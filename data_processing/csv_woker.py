@@ -94,7 +94,7 @@ class CSVWorker:
             df = pd.concat(dict_list, ignore_index=True)
             df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
             df.sort_values(by=['search_column_idx'], ascending=True, inplace=True)
-            df.to_csv(path_or_buf=self.dict_path, encoding='UTF-8', sep=';', index=False)
+            df.to_csv(path_or_buf=self.dict_path,decimal=',',encoding='UTF-8', sep=';', index=False)
         except Exception as err:
             logging.error(traceback.format_exc())
             raise err
