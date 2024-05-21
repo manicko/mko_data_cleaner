@@ -176,10 +176,10 @@ class CSVWorker:
                     file_index += 1
                     params['header'] = True  # turn on headers for a new file
                     file = Path(self.export_path, file_name.format(file_index=str(file_index)))
-                    print('.', end='')
+                    print('=', end='')
                 data_chunk.to_csv(path_or_buf=file, **params)
                 params['header'] = False  # turn of headers if continue
-                print(f'{row_counter:,} rows', end='\r')
+                # print(f'{row_counter:,} rows', end='\r')
 
             print(f']\n{row_counter:,} data rows were successfully exported to: {self.export_path}')
         except pd.errors.DataError as err:

@@ -48,6 +48,10 @@ def main(report_settings_file: str | os.PathLike):
         rows_count += db_worker.data_chunk_to_sql(chunk, table_name)
 
     print(f"{rows_count:,} rows were loaded to '{table_name}'")
+    # db_worker.get_distinct_values(table_name + '_distinct', table_name, 'adId')
+    # db_worker.update_other_values(table_name + '_distinct', table_name, 'adId', 'researchDate',*search_cols)
+
+    db_worker.insert_distinct(table_name + '_distinct', table_name, 'adId', 'researchDate', *search_cols)
 
     if not os.path.isfile(report_config.dict_path):
         csv_worker.get_merged_dictionary()
@@ -61,10 +65,12 @@ def main(report_settings_file: str | os.PathLike):
 
     # looping through search\update params and fill in data
     for col_name, param in params:
-        db_worker.search_update_query(table_name, col_name, *param)
+        db_worker.search_update_query(table_name + '_distinct', col_name, *param)
+
+    db_worker.update_values(table_name, table_name + '_distinct',  'adId', *clean_cols)
 
     # functionality to check if some rows are still empty after cleaning
-    # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
+    # get_n = db_worker.elect_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
 
     csv_worker.export_sql_to_csv(
         db_con=db_worker.db_con,
@@ -73,6 +79,5 @@ def main(report_settings_file: str | os.PathLike):
 
 
 if __name__ == '__main__':
-
     REPORT_SETTINGS = 'settings/report_settings.yaml'
     main(REPORT_SETTINGS)

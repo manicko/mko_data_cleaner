@@ -32,7 +32,7 @@ class DBWorker:
         self.db_con = sqlite3.connect(self.db_file)
         self.db_table = tbl_name
 
-    def create_table(self, tbl_name, *tbl_columns: str) -> bool:
+    def create_table(self, tbl_name, *tbl_columns: str):
         """ Creates datatable in the database using 'tbl_name' and 'tbl_columns'
         :param tbl_name: name of a table to create
         :param tbl_columns: str, list of column names
@@ -42,6 +42,48 @@ class DBWorker:
         query = f"CREATE TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
         self.perform_query(query)
         print(f'Table \'{tbl_name}\' created successfully')
+
+    # def get_distinct_values(self, target_tbl_name, from_tbl_name, dictinct_col: str):
+    #     query = (f"INSERT INTO {target_tbl_name} ({dictinct_col}) "
+    #              f"SELECT DISTINCT {dictinct_col} "
+    #              f"FROM {from_tbl_name};")
+    #     print(query)
+    #     self.perform_query(query)
+    #     print(f'Table \'{target_tbl_name}\' updated successfully')
+
+    def insert_distinct(self, target_tbl_name, from_tbl_name, dictinct_col, date_col, *tbl_columns):
+        query = (f"INSERT INTO {target_tbl_name} ({', '.join(tbl_columns)}, {dictinct_col}, {date_col}) "
+                 f"SELECT {', '.join(tbl_columns)}, {dictinct_col}, MAX({date_col}) "
+                 f"FROM {from_tbl_name} "
+                 f"GROUP BY {dictinct_col};")
+
+        # print(query)
+        self.perform_query(query)
+        print(f'Table \'{target_tbl_name}\' updated successfully')
+
+    # def update_other_values(self, target_tbl_name, from_tbl_name, dictinct_col, date_col, *tbl_columns: str):
+    #     query_col = [f'{name}=data.{name}' for name in tbl_columns if name != dictinct_col]
+    #
+    #     query = (f"UPDATE {target_tbl_name} "
+    #              f"SET  {', '.join(query_col)}  "
+    #              f"FROM (SELECT {', '.join(tbl_columns)}, {dictinct_col} , MAX({date_col}) FROM {from_tbl_name} GROUP BY {dictinct_col}) AS data "
+    #              f"WHERE {target_tbl_name}.{dictinct_col} = data.{dictinct_col};")
+    #
+    #     print(query)
+    #     self.perform_query(query)
+    #     print(f'Table \'{target_tbl_name}\' updated successfully')
+
+    def update_values(self, target_tbl_name, from_tbl_name, dictinct_col, *tbl_columns: str):
+        query_col = [f'{name}={from_tbl_name}.{name}' for name in tbl_columns if name != dictinct_col]
+
+        query = (f"UPDATE {target_tbl_name} "
+                 f"SET  {', '.join(query_col)}  "
+                 f"FROM {from_tbl_name} "
+                 f"WHERE {target_tbl_name}.{dictinct_col} = {from_tbl_name}.{dictinct_col};")
+        # (SELECT {', '.join(tbl_columns)}, {dictinct_col} FROM {from_tbl_name}) AS cleaned
+        # print(query)
+        self.perform_query(query)
+        print(f'Table \'{target_tbl_name}\' updated successfully')
 
     def perform_query(self, query: str, *term: tuple[str]):
         try:
@@ -218,8 +260,9 @@ class DBWorker:
 
         # create empty datatable
         self.create_table(data_table, *col_names, *clean_columns)
+        self.create_table(data_table + '_distinct', *col_names, *clean_columns)
         # create empty database for FTS search
-        self.link_search_table(data_table, *search_columns)
+        self.link_search_table(data_table + '_distinct', *search_columns)
         print(f'Datatable: {data_table} successfully created')
 
     def data_chunk_to_sql(self,
@@ -421,4 +464,4 @@ class DBWorker:
         # self.drop_triggers(tbl_name=data_table),
         # self.drop_tables(data_table, data_table + search_suffix)
         self.db_con.close()
-        self.delete_base_file()
+        # self.delete_base_file()
