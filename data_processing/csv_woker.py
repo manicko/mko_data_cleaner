@@ -94,7 +94,7 @@ class CSVWorker:
             df = pd.concat(dict_list, ignore_index=True)
             df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
             df.sort_values(by=['search_column_idx'], ascending=True, inplace=True)
-            df.to_csv(path_or_buf=self.dict_path,decimal=',',encoding='UTF-8', sep=';', index=False)
+            df.to_csv(path_or_buf=self.dict_path, decimal=',', encoding='UTF-8', sep=';', index=False)
         except Exception as err:
             logging.error(traceback.format_exc())
             raise err
@@ -169,18 +169,19 @@ class CSVWorker:
             row_counter = 0
             file_index = 1
             file = Path(self.export_path, file_name.format(file_index=str(file_index)))
-            print(f'Data writing in progress:')
+            print(f'Data writing in progress: [', end='')
             for data_chunk in pd.read_sql(f'SELECT * FROM {data_table}', db_con, chunksize=sql_chunk_size):
                 row_counter += len(data_chunk.index)
                 if row_counter > max_file_rows * file_index:
                     file_index += 1
                     params['header'] = True  # turn on headers for a new file
                     file = Path(self.export_path, file_name.format(file_index=str(file_index)))
+                    print('.', end='')
                 data_chunk.to_csv(path_or_buf=file, **params)
                 params['header'] = False  # turn of headers if continue
                 print(f'{row_counter:,} rows', end='\r')
 
-            print(f"{row_counter:,} data rows were successfully exported to: {self.export_path}")
+            print(f']\n{row_counter:,} data rows were successfully exported to: {self.export_path}')
         except pd.errors.DataError as err:
             logging.error(traceback.format_exc())
             raise err

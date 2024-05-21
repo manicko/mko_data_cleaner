@@ -1,5 +1,5 @@
 {
-  'PATH': 'data/finance/',
+  'PATH': 'data/sovcombank/',
   'DATA_FILES_SETTINGS': {
     'folder': 'raw_data',
     'ext': 'gz', # data files'  extension
