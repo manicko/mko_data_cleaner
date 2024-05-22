@@ -49,7 +49,7 @@
   'EXPORT_SETTINGS': {
     'folder': 'clean_data',
     'to_csv': { # general settings for pandas CSV reader
-      'chunksize': 10000,
+      'chunksize': 100000,
       'decimal': ',',
       'sep': ';',
       'encoding': 'UTF-8',

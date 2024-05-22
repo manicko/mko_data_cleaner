@@ -472,4 +472,4 @@ class DBWorker:
         # self.drop_triggers(tbl_name=data_table),
         # self.drop_tables(data_table, data_table + search_suffix)
         self.db_con.close()
-        # self.delete_base_file()
+        self.delete_base_file()
