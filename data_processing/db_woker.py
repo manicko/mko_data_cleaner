@@ -1,9 +1,7 @@
 import traceback
 import logging
 import sqlite3
-from typing import (Any, List, Optional, Union)
-from pathlib import Path
-import os
+from typing import (Any, List, Optional)
 from .utils import clean_names
 
 # # DB table keeping schema
@@ -27,10 +25,19 @@ DATA_TO_SQL_PARAMS = {
 
 
 class DBWorker:
-    def __init__(self, db_file, tbl_name: str = 'data_table'):
+    def __init__(self, db_file, data_tbl_name,
+                 column_names: list[str], search_columns: list[str], clean_columns: list[str],
+                 index_column: str | None = None, date_column: str | None = None,
+                 ):
         self.db_file = db_file
         self.db_con = sqlite3.connect(self.db_file)
-        self.db_table = tbl_name
+        self.data_tbl_name = data_tbl_name
+        self.column_names = column_names
+        self.search_columns = search_columns
+        self.clean_columns = clean_columns
+        self.index_column = index_column
+        self.date_column = date_column
+        self.index_tbl_name = None
 
     def create_table(self, tbl_name, *tbl_columns: str):
         """ Creates datatable in the database using 'tbl_name' and 'tbl_columns'
@@ -43,44 +50,29 @@ class DBWorker:
         self.perform_query(query)
         print(f'Table \'{tbl_name}\' created successfully')
 
-    # def get_distinct_values(self, target_tbl_name, from_tbl_name, dictinct_col: str):
-    #     query = (f"INSERT INTO {target_tbl_name} ({dictinct_col}) "
-    #              f"SELECT DISTINCT {dictinct_col} "
-    #              f"FROM {from_tbl_name};")
-    #     print(query)
-    #     self.perform_query(query)
-    #     print(f'Table \'{target_tbl_name}\' updated successfully')
+    def insert_distinct(self, target_tbl_name: str, from_tbl_name: str,
+                        dictinct_col: str, date_col: str | None = None, *tbl_columns: str):
 
-    def insert_distinct(self, target_tbl_name, from_tbl_name, dictinct_col, date_col, *tbl_columns):
-        query = (f"INSERT INTO {target_tbl_name} ({', '.join(tbl_columns)}, {dictinct_col}, {date_col}) "
-                 f"SELECT {', '.join(tbl_columns)}, {dictinct_col}, MAX({date_col}) "
+        insert_columns = select_columns = f"{', '.join(tbl_columns)}, {dictinct_col}"
+        if date_col:
+            insert_columns += f', {date_col}'
+            select_columns += f', MAX({date_col})'
+        query = (f"INSERT INTO {target_tbl_name} ({insert_columns}) "
+                 f"SELECT {select_columns}"
                  f"FROM {from_tbl_name} "
                  f"GROUP BY {dictinct_col};")
-
         # print(query)
         self.perform_query(query)
         print(f'Table \'{target_tbl_name}\' updated successfully')
 
-    # def update_other_values(self, target_tbl_name, from_tbl_name, dictinct_col, date_col, *tbl_columns: str):
-    #     query_col = [f'{name}=data.{name}' for name in tbl_columns if name != dictinct_col]
-    #
-    #     query = (f"UPDATE {target_tbl_name} "
-    #              f"SET  {', '.join(query_col)}  "
-    #              f"FROM (SELECT {', '.join(tbl_columns)}, {dictinct_col} , MAX({date_col}) FROM {from_tbl_name} GROUP BY {dictinct_col}) AS data "
-    #              f"WHERE {target_tbl_name}.{dictinct_col} = data.{dictinct_col};")
-    #
-    #     print(query)
-    #     self.perform_query(query)
-    #     print(f'Table \'{target_tbl_name}\' updated successfully')
+    def update_values(self, target_tbl_name, from_tbl_name, index_col, *tbl_columns: str):
 
-    def update_values(self, target_tbl_name, from_tbl_name, dictinct_col, *tbl_columns: str):
-        query_col = [f'{name}={from_tbl_name}.{name}' for name in tbl_columns if name != dictinct_col]
+        query_col = [f'{name}={from_tbl_name}.{name}' for name in tbl_columns if name != index_col]
 
         query = (f"UPDATE {target_tbl_name} "
                  f"SET  {', '.join(query_col)}  "
                  f"FROM {from_tbl_name} "
-                 f"WHERE {target_tbl_name}.{dictinct_col} = {from_tbl_name}.{dictinct_col};")
-        # (SELECT {', '.join(tbl_columns)}, {dictinct_col} FROM {from_tbl_name}) AS cleaned
+                 f"WHERE {target_tbl_name}.{index_col} = {from_tbl_name}.{index_col};")
         # print(query)
         self.perform_query(query)
         print(f'Table \'{target_tbl_name}\' updated successfully')
@@ -242,33 +234,49 @@ class DBWorker:
 
         print(f"Search triggers were successfully created for '{search_tbl}' ")
 
-    def create_search_table(self,
-                            data_table: str,
-                            search_columns: list[str],
-                            clean_columns: list[str],
-                            col_names: list[str]
-                            ):
+    def create_search_table(self):
         """
-        creates datatable in the database
-        :param data_table: name of the existing table
-        :param clean_columns:
-        :param search_columns:
-        :param col_names:
-            https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_sql.html
-        :return: count of data rows loaded
+        creates datatable, search table and index in the database
         """
-
         # create empty datatable
-        self.create_table(data_table, *col_names, *clean_columns)
-        self.create_table(data_table + '_distinct', *col_names, *clean_columns)
-        # create empty database for FTS search
-        self.link_search_table(data_table + '_distinct', *search_columns)
-        print(f'Datatable: {data_table} successfully created')
+        self.create_table(self.data_tbl_name, *self.column_names, *self.clean_columns)
+        if self.index_column:
+            self.index_tbl_name = self.data_tbl_name + '_distinct'
+            index_tbl_column_names = filter(None, list((self.index_column,
+                                                        *self.search_columns,
+                                                        *self.clean_columns,
+                                                        self.date_column)))
+            # create empty index base
+            self.create_table(self.index_tbl_name, *index_tbl_column_names)
+        else:
+            self.index_tbl_name = self.data_tbl_name
+
+        # link index base to FTS search table
+        self.link_search_table(self.index_tbl_name, *self.search_columns)
+        print(f'Datatable: {self.data_tbl_name} successfully created')
+
+    def clean_update_data(self, params):
+        if self.index_column:
+            # insert distinct rows to index table
+            self.insert_distinct(self.index_tbl_name,
+                                 self.data_tbl_name,
+                                 self.index_column, self.date_column,
+                                 *self.search_columns)
+
+        # looping through search\update params and fill in data
+        for col_name, param in params:
+            self.search_update_query(self.index_tbl_name, col_name, *param)
+
+        # update clean columns in the data table
+        if self.index_column:
+            print(f"Updating clean columns in the data table")
+            self.update_values(self.data_tbl_name, self.index_tbl_name,
+                               self.index_column, *self.clean_columns)
 
     def data_chunk_to_sql(self,
                           chunk,
                           data_table,
-                          sql_loader_settings: dict[str, Any] = {}
+                          sql_loader_settings: dict[str, Any] = None
                           ) -> int:
         """
         :param data_table:
@@ -277,7 +285,7 @@ class DBWorker:
             for details refer to pandas to_sql settings
         :return: int, number of rows loaded to database
         """
-        if not sql_loader_settings:
+        if sql_loader_settings is None:
             sql_loader_settings = DATA_TO_SQL_PARAMS
         chunk.to_sql(**sql_loader_settings, name=data_table, con=self.db_con)  # load data
         return chunk.shape[0]

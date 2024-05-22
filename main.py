@@ -2,7 +2,7 @@ import os
 from data_processing.rep_config import ReportConfig
 from data_processing.db_woker import DBWorker
 from data_processing.csv_woker import CSVWorker
-
+from datetime import datetime
 from data_processing.utils import (
     get_names_index,
     clean_names
@@ -10,6 +10,9 @@ from data_processing.utils import (
 
 
 def main(report_settings_file: str | os.PathLike):
+    start_time = datetime.now().replace(microsecond=0)
+    print(f'\nОбработка стартовала {str(start_time)}.')
+
     report_config = ReportConfig(report_settings_file)
     csv_worker = CSVWorker(
         data_path=report_config.import_path,
@@ -29,18 +32,23 @@ def main(report_settings_file: str | os.PathLike):
     actions = report_config.dict_settings['actions']
     clean_cols_ids = report_config.dict_settings['clean_cols_ids']
     clean_cols = list(clean_cols_ids.keys())
+    index_column = report_config.data_settings.get('index_column', None)
+    date_column = report_config.data_settings.get('date_column', None)
 
     # DB settings
-    db_worker = DBWorker(report_config.db_file)
     table_name = report_config.db_settings['table_name']
-
-    # creating database, datatable, search table
-    db_worker.create_search_table(
-        data_table=table_name,
+    db_worker = DBWorker(
+        db_file=report_config.db_file,
+        data_tbl_name=table_name,
+        column_names=sample_data_headers,
         search_columns=search_cols,
         clean_columns=clean_cols,
-        col_names=sample_data_headers,
+        index_column=index_column,
+        date_column=date_column
     )
+
+    # creating database, datatable, search table
+    db_worker.create_search_table()
 
     # loading data to database
     rows_count = 0
@@ -48,10 +56,6 @@ def main(report_settings_file: str | os.PathLike):
         rows_count += db_worker.data_chunk_to_sql(chunk, table_name)
 
     print(f"{rows_count:,} rows were loaded to '{table_name}'")
-    # db_worker.get_distinct_values(table_name + '_distinct', table_name, 'adId')
-    # db_worker.update_other_values(table_name + '_distinct', table_name, 'adId', 'researchDate',*search_cols)
-
-    db_worker.insert_distinct(table_name + '_distinct', table_name, 'adId', 'researchDate', *search_cols)
 
     if not os.path.isfile(report_config.dict_path):
         csv_worker.get_merged_dictionary()
@@ -63,11 +67,7 @@ def main(report_settings_file: str | os.PathLike):
         search_column_index=search_cols_index
     )
 
-    # looping through search\update params and fill in data
-    for col_name, param in params:
-        db_worker.search_update_query(table_name + '_distinct', col_name, *param)
-
-    db_worker.update_values(table_name, table_name + '_distinct',  'adId', *clean_cols)
+    db_worker.clean_update_data(params)
 
     # functionality to check if some rows are still empty after cleaning
     # get_n = db_worker.elect_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
@@ -76,6 +76,9 @@ def main(report_settings_file: str | os.PathLike):
         db_con=db_worker.db_con,
         data_table=table_name
     )
+
+    end_time = datetime.now().replace(microsecond=0)
+    print(f'\nПодготовка отчетов завершена в {str(end_time)}. \nПодготовка заняла {str(end_time - start_time)}.')
 
 
 if __name__ == '__main__':
