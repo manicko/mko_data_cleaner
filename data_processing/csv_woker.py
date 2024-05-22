@@ -165,7 +165,7 @@ class CSVWorker:
             # if used with zip sql_chunk_size MUST be the same as max_file_rows
             # due to the bug in Pandas module
             max_file_rows = params.pop('chunksize', 100000)
-            sql_chunk_size = 50000
+            sql_chunk_size = 100000
             row_counter = 0
             file_index = 1
             file = Path(self.export_path, file_name.format(file_index=str(file_index)))
