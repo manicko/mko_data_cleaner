@@ -1,9 +1,9 @@
 import os
-from data_processing.rep_config import ReportConfig
-from data_processing.db_woker import DBWorker
-from data_processing.csv_woker import CSVWorker
+from core.rep_config import ReportConfig
+from core.db_woker import DBWorker
+from core.csv_woker import CSVWorker
 
-from data_processing.utils import (
+from core.utils import (
     get_names_index,
     clean_names
 )

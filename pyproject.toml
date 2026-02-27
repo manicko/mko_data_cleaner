@@ -1,0 +1,171 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=61.0", "wheel>=0.37.1"]
+
+[project]
+name = "mko_data_cleaner"
+version = "0.0.1"
+authors = [
+    { name = "mko", email = "manicko@yandex.ru" },
+]
+
+description = "Tool to load data."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.2.0",
+    "platformdirs>=4.7.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "python-dateutil>=2.8.0",
+    "PyYAML>=6.0.1",
+    "typer>=0.24.0",
+    "Unidecode>=1.3.8",
+    "urllib3>=2.1.0",
+]
+
+classifiers = [
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/manicko/mko_data_cleaner"
+Issues = "https://github.com/manicko/mko_data_cleaner"
+
+[project.scripts]
+mko-get-mediascope = "mko_data_cleaner.app:app"
+
+
+[tool.setuptools]
+# https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html
+platforms = ["Linux", "Windows"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mko_data_cleaner", "mko_data_cleaner.*"]
+exclude = ["tests/.pytest_cache*"]
+namespaces = false
+
+# Black configuration
+[tool.black]
+line-length = 88
+skip-string-normalization = false
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.venv
+  | build
+  | dist
+  | migrations
+  | __pycache__
+)/
+'''
+
+# isort configuration (used by isort hook)
+[tool.isort]
+profile = "black"
+known_first_party = ["mko_data_cleaner", "settings", "core"]
+combine_as_imports = true
+
+# Ruff top-level global settings
+[tool.ruff]
+line-length = 88
+fix = false   # IMPORTANT: do NOT auto-fix by default
+# global excludes (keeps ruff from checking virtual envs and build artifacts)
+exclude = [
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".mypy_cache",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+
+# Newer Ruff config: put lint-specific options under [tool.ruff.lint]
+[tool.ruff.lint]
+select = [
+    "E", # PEP8 errors
+    "F", # Pyflakes
+    "I", # import-sorted checks (ruff checks imports)
+    "B", # bugbear (best practices)
+    "UP", # pyupgrade rules
+]
+# We ignore line length because Black enforces it
+ignore = [
+    "E501",
+    # optionally ignore import-sort warning which is handled by isort:
+    "I001", # "Import block is un-sorted or un-formatted" if you prefer isort to run
+]
+
+# Specific ruff.isort-related options (only ruff-supported keys)
+# Note: do NOT set profile here (ruff doesn't accept "profile" key)
+[tool.ruff.lint.isort]
+known-first-party = ["mko_data_cleaner", "settings", "core"]
+combine-as-imports = true
+
+# Ruff formatting section
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+
+# MyPy config (project-level)
+[tool.mypy]
+# If sources live in package root, mypy_path not needed; if you use src/ layout set mypy_path.
+mypy_path = "./src"
+follow_imports = "silent"
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_any_generics = true
+check_untyped_defs = true
+no_implicit_reexport = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+python_files = ["tests.py", "test_*.py"]
+addopts = [
+    "--import-mode=importlib",
+    "-ra",
+    "-v",
+    "--strict-markers",
+    "--asyncio-mode=auto"
+]
+console_output_style = "classic"
+testpaths = ["tests"]
+pythonpath = ["src"]
+# register custom markers to avoid PytestUnknownMarkWarning
+markers = [
+    "slow: marks tests as slow (use -m slow to run)",
+]
+
+
+[dependency-groups]
+dev = [
+    "black>=26.1.0",
+    "isort>=7.0.0",
+    "pytest>=9.0.2",
+    "pytest-mock>=3.15.1",
+    "ruff>=0.15.1",
+    "mypy>=1.10.0",
+    "twine>=5.0.0"
+]

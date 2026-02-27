@@ -1,0 +1,67 @@
+{
+
+  # Always 1. Schema versioning may be added in a future release of logging
+  "version": 1,
+  "disable_existing_loggers": False,
+  # "Name of formatter" : {Formatter Config Dict}
+  "formatters": {
+    # Formatter Name
+    "basic": {
+      # class is always "logging.Formatter"
+      "class": "logging.Formatter",
+      # Optional: logging output format
+      "format": "%(asctime)s - %(levelname)s - %(message)s - %(name)s ",
+      # Optional: asctime format
+      "datefmt": "%d-%m-%y %I:%M:%S %p"
+    }
+  },
+  # Handlers use the formatter names declared above
+  "handlers": {
+    # Name of handler
+    "console": {
+      # The class of logger. A mixture of logging.config.dictConfig() and
+      # logger class-specific keyword arguments (kwargs) are passed in here.
+      "class": "logging.StreamHandler",
+      # This is the formatter name declared above
+      "formatter": "basic",
+      "level": "INFO",
+      # The default is stderr
+      "stream": "ext://sys.stdout"
+    },
+    # Same as the StreamHandler example above, but with different
+    # handler-specific kwargs.
+    "rotating_file": {
+      "class": "logging.handlers.RotatingFileHandler",
+      "level": "INFO",
+      "formatter": "basic",
+      "filename": "log.log",
+      "maxBytes": 2000000,
+      "backupCount": 2,
+      "encoding": "utf-8"
+    }
+  },
+  # Loggers use the handler names declared above
+  "loggers": {
+    "__main__": { # if __name__ == "__main__"
+      # Use a list even if one handler is used
+      "handlers": [ "rotating_file" ],
+      "level": "INFO",
+      "propagate": False
+    },
+    "tests": {
+      "level": "INFO",
+      "handlers": [ "rotating_file" ],
+      "propagate": False
+    },
+    "telebot": {
+      "level": "INFO",
+      "handlers": [ "console", "rotating_file" ],
+      "propagate": False
+    }
+  },
+  "root": {
+    "level": "INFO",
+    "handlers": [ "console", "rotating_file" ]
+  }
+
+}

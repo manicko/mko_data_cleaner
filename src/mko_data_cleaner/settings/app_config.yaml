@@ -1,15 +1,19 @@
 {
-  'PATH': 'data/sovcombank/',
-  'DATA_FILES_SETTINGS': {
-    'folder': 'raw_data',
-    'ext': 'gz', # data files'  extension
-    #'file_name': 'parfiumeriia_2023-02-01_2023-02-28_20240106_143305.csv',
-    'search_cols': [ 2,3, 4, 5, 6, 7, 8, 9 ]
+  'data_paths': {
+    'base_folder': 'data/sovcombank/',
+    'import_folder': 'raw_data',
+    'export_folder': 'clean_data',
+    'dict_folder': 'dict',
+    'dict_file_name': 'merged_dictionary.csv',
+    'db_folder': 'data_base',
+    'db_file_name': 'db_example.db'
   },
-  'DICT_FILE_SETTINGS': {
-    'folder': 'dict',
-    'ext': 'csv',
-    'file_name': 'merged_dictionary.csv',
+  'data_file_settings': {
+    'extension': 'gz', # data files'  extension
+    'search_cols': [ 2, 3, 4, 5, 6, 7, 8, 9 ]
+  },
+  'dict_file_settings': {
+    'extension': 'csv',
     'actions': { # columns' indexes in the file_search containing settings
       'action': 0,  # update or delete setting
       'term': 3  # search string used after match setting in the SQL query
@@ -28,12 +32,10 @@
       'cln_5': 14
     }
   },
-  'DATABASE_SETTINGS': {
-    folder: 'data_base',
-    file_name: 'db_example',
+  'database_settings': {
     table_name: 'data_table'
   },
-  'READ_SETTINGS': { # general settings for pandas CSV reader
+  'read_settings': { # general settings for pandas CSV reader
     'from_csv': {
       'sep': ';',
       'on_bad_lines': 'skip',
@@ -44,8 +46,7 @@
       'header': 0  # ignor column names in CSV file
     }
   },
-  'EXPORT_SETTINGS': {
-    'folder': 'clean_data',
+  'export_settings': {
     'to_csv': { # general settings for pandas CSV reader
       'chunksize': 10000,
       'decimal': ',',
@@ -54,7 +55,7 @@
       'mode': 'a',
       'header': True,
       'index': False,
-      'compression': { 'method': 'gzip' }
+      'compression': 'gzip'
     }
   }
 }

@@ -1,0 +1,9 @@
+include README.md
+include LICENSE.txt
+include requirements.txt
+recursive-include mko_get_mediascope_data *.json *.yaml
+
+exclude tests
+exclude mko_get_mediascope_data/settings/connections/mediascope.json
+exclude *.git
+global-exclude *.pyc *.o
