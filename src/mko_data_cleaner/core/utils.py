@@ -1,10 +1,8 @@
-from os import PathLike
 from pathlib import Path
 from re import match, sub
 import logging
 import time
-from collections.abc import Iterator
-from datetime import date, datetime
+from collections.abc import Generator
 from os import PathLike
 from pathlib import Path
 from typing import Any, Literal
@@ -22,15 +20,8 @@ logger = logging.getLogger(__name__)
 ALLOWED_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
 RESTRICTED_PATTERN = r'[#@$%&~*+=<>^`|(){}?!;:,.-\/"]'
 
-DATA_TO_SQL_PARAMS = {
-    'if_exists': 'append',
-    'index': False,
-    'index_label': None,
-    'chunksize': 2000
-}
 
-
-def get_names_index(names: list[str], index: list[int]) -> dict[int:str]:
+def get_names_index(names: list[str], index: list[int]) -> dict[int,str]:
     index = list(map(int, index))
     return {i: names[i] for i in index}
 
@@ -93,48 +84,6 @@ def get_dir_content(path: str | PathLike, ext: str = 'yaml', subfolders=True):
         raise err
     else:
         return files
-
-
-def get_path(*path: str, mkdir: bool = False):
-    path = Path(*path)
-    if mkdir is True:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-        except FileNotFoundError as err:
-            raise FileNotFoundError(f"File or folder with path: '{path}' is not found", err)
-
-    if path.exists() is False:
-        try:
-            root_dir = Path().absolute()
-            from_root = Path.joinpath(root_dir, path)
-            if from_root.exists() is False:
-                raise NameError(f"File or folder with path: '{path}' is not found")
-        except NameError:
-            raise NameError(f"File or folder with path: '{path}' is not found")
-        else:
-            return from_root
-    else:
-        return path
-
-
-
-
-def str_to_date(date_string: str):
-    """
-    converts string to date format
-    :param date_string: str in format  %Y-%m-%d
-    :return: date
-    """
-    try:
-        date_string = datetime.strptime(date_string, "%Y-%m-%d").date()
-    except (ValueError, TypeError) as err:
-        logger.error(f"wrong format of date_string {date_string}: {err}")
-        raise err
-    else:
-        return date_string
-
-
-
 
 
 
@@ -210,11 +159,6 @@ def csv_to_file(
 
 
 
-
-def dir_content_to_dict(files, suffix: str = "yaml"):
-    return {file.name.removesuffix(suffix): file for file in files}
-
-
 def list_files_in_directory(
     path: str | PathLike[str],
     extensions: tuple[str, ...] = ("yaml", "json"),
@@ -262,41 +206,6 @@ def ensure_path_exists(path: Path) -> None:
     except OSError as e:
         raise ValueError(f"Failed to create path {path}: {e}") from e
 
-
-def resolve_path(path: str | Path, base_dir: Path | None = None) -> Path:
-    """
-    Resolves an absolute path, creating it if necessary.
-
-    If a relative path is given, it is resolved against `base_dir`.
-
-    Args:
-        path (Union[str, Path]): The path to resolve (can be absolute or relative).
-        base_dir (Union[Path, None], optional): The base directory for resolving relative paths.
-            Defaults to the parent directory of this script.
-
-    Returns:
-        Path: The resolved absolute path.
-
-    Raises:
-        ValueError: If the path cannot be found or created.
-    """
-    path = Path(path).expanduser()  # Expands `~` (home directory)
-
-    # If the path is absolute and exists, return it immediately
-    if path.is_absolute():
-        if path.exists():
-            return path
-        ensure_path_exists(path)  # If not found, attempt to create it
-        return path
-
-    # Ensure base_dir is a valid Path
-    base_dir = base_dir or Path(__file__).resolve().parent.parent
-    resolved_path = (base_dir / path).resolve()
-
-    if not resolved_path.exists():
-        ensure_path_exists(resolved_path)  # Create the path if it does not exist
-
-    return resolved_path
 
 
 def yaml_to_dict(file: str | PathLike) -> dict[str, Any] | None:

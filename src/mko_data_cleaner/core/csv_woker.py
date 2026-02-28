@@ -5,16 +5,21 @@ import logging
 import traceback
 from time import time, strftime
 import pandas as pd
-
+from collections.abc import Generator
 from .utils import (
     get_dir_content
 )
 
 
 class CSVWorker:
-    def __init__(self, data_path: str | os.PathLike, data_settings: dict, reader_settings: dict,
-                 dict_path: str | os.PathLike, dict_settings: dict,
-                 export_path: str | os.PathLike, export_settings: dict):
+    def __init__(self, data_path: str | os.PathLike,
+                 data_settings: dict,
+                 reader_settings: dict,
+                 dict_path: str | os.PathLike,
+                 dict_settings: dict,
+                 export_path: str | os.PathLike,
+                 export_settings: dict
+                 ):
         self.data_settings = data_settings
         self.export_path = Path(export_path)
         self.reader_settings = reader_settings
@@ -22,7 +27,7 @@ class CSVWorker:
         self.dict_path = Path(dict_path)
         self.dict_settings = dict_settings
 
-        self.data_files = get_dir_content(data_path, ext=self.data_settings.get('ext', 'csv'))
+        self.data_files = get_dir_content(data_path, ext=self.data_settings.get('extension', 'csv'))
         self.sample_data_file = next(self.data_files)
         self.csv_headers = self.get_csv_headers(self.sample_data_file)
 
@@ -45,7 +50,7 @@ class CSVWorker:
                 self.reader_settings['nrows'] = cur_rows
             return csv_column_names
 
-    def get_chunk_from_csv(self, csv_file, headers) -> iter:
+    def get_chunk_from_csv(self, csv_file, headers) -> Generator:
         """
         Generator to read data from CSV file in chunks
         :return: iterator
@@ -75,18 +80,52 @@ class CSVWorker:
             file = next(self.data_files, False)
 
     def get_file_name(self, name_prefix, name_suffix):
-        ext = ''
+        ext = self.get_files_suffix(self.export_settings['compression'])
         time_str = strftime("%Y%m%d-%H%M%S")
-        if 'compression' in self.export_settings and 'method' in self.export_settings['compression']:
-            ext = '.' + self.export_settings['compression']['method']
-            ext = ext.replace('.gzip', '.gz')
-        output_file = f'{name_prefix}_{time_str}_{name_suffix}.csv{ext}'
+        output_file = f'{name_prefix}_{time_str}_{name_suffix}{ext}'
         return output_file
+
+    @staticmethod
+    def get_files_suffix(compression: str | dict = None):
+        """Возвращает полное расширение файла с учётом сжатия.
+        Всегда нормализует gzip → .gz (стандартное и надёжное расширение).
+        """
+        base = ".csv"
+
+        if compression is None or compression == "infer" or not compression:
+            return base
+
+        # Получаем метод сжатия
+        if isinstance(compression, dict):
+            method = compression.get("method", "").lower().strip()
+        else:
+            method = str(compression).lower().strip()
+
+        # Нормализация gzip (самая частая проблема)
+        if method in ("gzip", ".gzip", "gz", ".gz"):
+            return base + ".gz"
+
+        # Другие популярные сжатия
+        elif method in ("bz2", "bzip2"):
+            return base + ".bz2"
+        elif method in ("xz",):
+            return base + ".xz"
+        elif method in ("zip",):
+            return base + ".zip"
+        elif method in ("zstd",):
+            return base + ".zst"
+
+        else:
+            clean = method.strip(".")
+            return base + "." + clean
+
+
+
 
     def get_merged_dictionary(self):
         try:
             dict_list = []
-            for file in get_dir_content(self.dict_path.parent, self.dict_settings['ext']):
+            for file in get_dir_content(self.dict_path.parent, self.dict_settings.get('extension', '.csv')):
                 dict_data = pd.read_csv(filepath_or_buffer=file, **self.reader_settings)
                 # dict_data['file'] = file.stem
                 dict_list.append(dict_data)
@@ -94,7 +133,7 @@ class CSVWorker:
             df = pd.concat(dict_list, ignore_index=True)
             df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
             df.sort_values(by=['search_column_idx'], ascending=True, inplace=True)
-            df.to_csv(path_or_buf=self.dict_path, decimal=',', encoding='UTF-8', sep=';', index=False)
+            df.to_csv(path_or_buf=self.dict_path, decimal=',', encoding='utf-8-sig', sep=';', index=False)
         except Exception as err:
             logging.error(traceback.format_exc())
             raise err
@@ -103,7 +142,7 @@ class CSVWorker:
 
     def get_clean_params(self,
                          clean_cols_ids: dict,
-                         search_column_index: dict[int:str],
+                         search_column_index: dict[int,str],
                          actions: dict | None = None
                          ):
         # read cleaning settings from the dictionary
@@ -162,6 +201,7 @@ class CSVWorker:
             file_name = self.get_file_name(file_prefix, '{file_index}')
 
             params = self.export_settings.copy()
+
             # if used with zip sql_chunk_size MUST be the same as max_file_rows
             # due to the bug in Pandas module
             max_file_rows = params.pop('chunksize', 10000)

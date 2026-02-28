@@ -25,7 +25,7 @@ EncodingStr = Annotated[
 NameConstrained = Annotated[
     str,
     StringConstraints(
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_]*$",
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
         min_length=1,
         max_length=63,
     ),
@@ -56,23 +56,17 @@ class DataFileExtension(StrEnum):
 class WorkingPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    base_folder: Path = Path('data')
-
     import_folder: Path = Path('raw_data')
     export_folder: Path = Path('clean_data')
 
-    dict_folder: Path = Path('dict')
-    dict_file_name: str = 'merged_dictionary.csv'
-
-    db_folder: Path = 'data_base'
-    db_file_name: str = 'db_example.db'
+    dict_file: str = 'dict/merged_dictionary.csv'
+    db_file: str = 'data_base/db_example.db'
 
 
 
 
 class DataFile(BaseModel):
     model_config = ConfigDict(extra="allow")
-
     extension: DataFileExtension
     search_cols: list[NonNegativeInt]
 
@@ -99,7 +93,7 @@ class PandasReadCSV(BaseModel):
     sep: str = ';'
     on_bad_lines: Literal["error", "warn", "skip"] = "skip"
     encoding: EncodingStr = 'utf-8'
-    index_col: NonNegativeInt | None = False
+    index_col: NonNegativeInt | Literal[False] | None = None
     skiprows: NonNegativeInt | None = False
     decimal: Literal[',', '.'] = ','
     header: NonNegativeInt | Literal["infer"] | None = 0
@@ -109,18 +103,19 @@ class PandasToCSV(BaseModel):
     model_config = ConfigDict(extra="allow")
     sep: Literal[',', ';'] = ','
     chunksize: NonNegativeInt | None = 10000
-    encoding: EncodingStr = 'utf-8'
-    index_col: NonNegativeInt = False
-    skiprows: NonNegativeInt = False
+    encoding: EncodingStr = 'utf-8-sig'
     decimal: Literal[',', '.'] = ','
     header: bool = True
     index: bool = False
+    mode: Literal["w", "x", "a"] | None = "a"
     compression: Literal["infer", "gzip", "bz2", "zip", "xz", "zstd"] | None = "gzip"
 
 
 class ReadCSV(BaseModel):
     from_csv: PandasReadCSV
 
+class WriteCSV(BaseModel):
+    to_csv: PandasToCSV
 
 class DataSettings(BaseModel):
     data_paths: WorkingPaths
@@ -128,3 +123,4 @@ class DataSettings(BaseModel):
     dict_file_settings: DataDict
     database_settings: Database
     read_settings: ReadCSV
+    export_settings: WriteCSV

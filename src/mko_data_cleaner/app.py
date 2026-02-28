@@ -8,9 +8,9 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from .core.init_service import init_project
-from .core.services import app_service
-from .core.utils import list_files_in_directory
+from mko_data_cleaner.core.init_service import init_project
+from mko_data_cleaner.core.services import app_service
+from mko_data_cleaner.core.utils import list_files_in_directory
 
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -55,7 +55,7 @@ def run(
 
 
 @app.command()
-def list_reports():
+def list_settings():
     """Показать все доступные файлы заданий"""
     reports_dir = app_service.app_paths.reports
     files = list_files_in_directory(
@@ -95,6 +95,6 @@ __all__ = [
     "initialize_settings",
     "init",
     "run",
-    "list_reports",
+    "list_settings",
     "app",
 ]

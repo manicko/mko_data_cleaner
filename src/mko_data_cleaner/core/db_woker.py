@@ -32,11 +32,11 @@ class DBWorker:
         self.db_con = sqlite3.connect(self.db_file)
         self.db_table = tbl_name
 
-    def create_table(self, tbl_name, *tbl_columns: str) -> bool:
+    def create_table(self, tbl_name, *tbl_columns: str) -> None:
         """ Creates datatable in the database using 'tbl_name' and 'tbl_columns'
         :param tbl_name: name of a table to create
         :param tbl_columns: str, list of column names
-        :return: bool, True or False depending on the operation success
+        :return:
         """
         tbl_name, *tbl_columns = clean_names(tbl_name, *tbl_columns)
         query = f"CREATE TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"

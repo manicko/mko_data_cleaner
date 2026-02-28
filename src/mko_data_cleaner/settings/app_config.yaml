@@ -1,12 +1,9 @@
 {
   'data_paths': {
-    'base_folder': 'data/sovcombank/',
-    'import_folder': 'raw_data',
+     'import_folder': 'raw_data',
     'export_folder': 'clean_data',
-    'dict_folder': 'dict',
-    'dict_file_name': 'merged_dictionary.csv',
-    'db_folder': 'data_base',
-    'db_file_name': 'db_example.db'
+    'dict_file': 'dict/merged_dictionary.csv',
+    'db_file': 'data_base/db_example.db'
   },
   'data_file_settings': {
     'extension': 'gz', # data files'  extension
@@ -51,7 +48,7 @@
       'chunksize': 10000,
       'decimal': ',',
       'sep': ';',
-      'encoding': 'UTF-8',
+      'encoding': 'utf-8-sig',
       'mode': 'a',
       'header': True,
       'index': False,
