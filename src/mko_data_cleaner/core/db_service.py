@@ -1,10 +1,11 @@
 import traceback
 import logging
 import sqlite3
-from typing import (Any, List, Optional, Union)
-from pathlib import Path
-import os
+from typing import (Any, List, Optional)
 from .utils import clean_names
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # # DB table keeping schema
 MASTER_TABLE = 'sqlite_master'
@@ -27,21 +28,38 @@ DATA_TO_SQL_PARAMS = {
 
 
 class DBWorker:
-    def __init__(self, db_file, tbl_name: str = 'data_table'):
+    def __init__(self, db_file: Path, tbl_name: str = 'data_table'):
         self.db_file = db_file
         self.db_con = sqlite3.connect(self.db_file)
         self.db_table = tbl_name
+        self._tbl_columns = None
+        self._search_columns = None
 
-    def create_table(self, tbl_name, *tbl_columns: str) -> None:
+    @property
+    def tbl_columns(self):
+        return self._tbl_columns
+
+    @tbl_columns.setter
+    def tbl_columns(self, tbl_columns: list[str]):
+        self._tbl_columns =
+
+    def create_table(self, tbl_name: str, *tbl_columns: str) -> None:
         """ Creates datatable in the database using 'tbl_name' and 'tbl_columns'
         :param tbl_name: name of a table to create
         :param tbl_columns: str, list of column names
         :return:
         """
-        tbl_name, *tbl_columns = clean_names(tbl_name, *tbl_columns)
-        query = f"CREATE TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
-        self.perform_query(query)
-        print(f'Table \'{tbl_name}\' created successfully')
+        try:
+            tbl_name, *tbl_columns = clean_names(tbl_name, *tbl_columns)
+            query = f"CREATE TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
+            self.perform_query(query)
+            logger.info(f'Table \'{tbl_name}\' created successfully')
+        except sqlite3.Error as err:
+            logger.error(
+                f"Error {err} while creating the table {tbl_name}",
+                traceback.format_exc()
+            )
+            raise err
 
     def perform_query(self, query: str, *term: tuple[str]):
         try:
@@ -61,12 +79,16 @@ class DBWorker:
         :return: bool, drop status True or False as value
         """
         query = f"DROP TABLE IF EXISTS {table_name}"
-        if self.perform_query(query):
-            print(f"Table '{table_name}' was successfully dropped")
-            return True
-        return False
+        try:
+            if self.perform_query(query):
+                logger.info(f"Table '{table_name}' was successfully dropped")
+                return True
+            return False
+        except sqlite3.Error:
+            logging.error(traceback.format_exc())
+            return False
 
-    def drop_tables(self, *tbl_names) -> dict[str:bool]:
+    def drop_tables(self, *tbl_names) -> dict[str, bool]:
         """
         Drops tables provided as list of table names from current database using connection to the database
         :param tbl_names: str, name or multiple names of a tables to be dropped
@@ -87,17 +109,18 @@ class DBWorker:
         self.perform_query(query)
         print(f"Trigger '{tr_name}' was successfully dropped")
 
-    def drop_triggers(self, *tr_names: str | None, tbl_name: Optional[str] = None):
+    def drop_triggers(self, *tr_names: str | None, tbl_name: str | None = None):
         """
         Delete list of Triggers using theis names from database.
         if names are not provided use tbl_name and the following pattern to generate Trigger names:
         {tbl_name}_insert;{tbl_name}_delete;{tbl_name}_update,
         :param tr_names: str, Trigger names to delete
         :param tbl_name: str, used if Trigger names are not provided
-        :return: bool, True or False depending on the operation success
+        :return: None
         """
         if not tr_names:  # trying to get Trigger names from table name
-            if tbl_name is None:  # cancel operation if table name is not set
+            if not tbl_name:  # cancel operation if table name is not set
+                logger.error(f"Not possible to drop triggers because tbl_name is empty")
                 raise NameError("Require table name to drop triggers")
             tr_names = f'{tbl_name}_insert;{tbl_name}_delete;{tbl_name}_update'.split(';')
         map(self.drop_trigger, tr_names)
@@ -116,7 +139,7 @@ class DBWorker:
         exist = bool(self.perform_query(query).fetchone()[0])
         return exist
 
-    def add_column(self, tbl_name, col_name, col_type):
+    def add_column(self, tbl_name: str, col_name: str, col_type: str):
         """
         Adds columns to the datatable from the given list of column names and their types.
         :param col_name:str, Name of column to be added
@@ -126,14 +149,15 @@ class DBWorker:
         """
         col_name = clean_names(col_name)
         query = f"ALTER TABLE {tbl_name} ADD {col_name} {col_type.upper()};"
-        self.perform_query(query)
-        print(f"Column '{col_name}' was successfully created in '{tbl_name}'")
 
-    def add_columns(self, tbl_name: str, **col_params: dict[str:str]):
+        self.perform_query(query)
+        logger.info(f"Column '{col_name}' was successfully created in '{tbl_name}'")
+
+    def add_columns(self, tbl_name: str, **col_params: str):
         """
         Adds columns to the datatable from the given list of column names and their types.
         :param tbl_name: str, name of a table to add columns
-        :param col_params: dict[str], Dictionary containing column name as 'key' and column 'type' as 'value'
+        :param col_params: dict[str,str], Dictionary containing column name as 'key' and column 'type' as 'value'
         :return: dict[str:bool], dictionary with column names as keys and add status True or False as value
         """
         for c_name, c_type in col_params.items():
@@ -167,29 +191,31 @@ class DBWorker:
         old_columns = ','.join(f'old.{c}' for c in search_columns)
 
         #  Triggers to keep the Search table up to date.
+
         query = {
-            'insert': '''   
-                            CREATE TRIGGER IF NOT EXISTS {table}_insert AFTER INSERT ON {table}
-                            BEGIN
-                                INSERT INTO {search_tbl} (rowid, {column_list}) 
-                                VALUES (new.rowid, {new_columns});
-                            END;
-                            ''',
+            'insert': '''
+                      CREATE TRIGGER IF NOT EXISTS {table}_insert AFTER INSERT ON {table}
+                      BEGIN
+                      INSERT INTO {search_tbl} (rowid, {column_list})
+                      VALUES (new.rowid, {new_columns});
+                      END;
+                      ''',
             'delete': '''
-                            CREATE TRIGGER IF NOT EXISTS {table}_delete AFTER DELETE ON {table}
-                            BEGIN
-                               INSERT INTO {search_tbl} ({search_tbl}, rowid, {column_list}) 
-                               VALUES ('delete', old.rowid, {old_columns});
-                            END;
-                            ''',
+                      CREATE TRIGGER IF NOT EXISTS {table}_delete AFTER DELETE ON {table}
+                      BEGIN
+                      INSERT INTO {search_tbl} ({search_tbl}, rowid, {column_list})
+                      VALUES ('delete', old.rowid, {old_columns});
+                      END;
+                      ''',
             'update': '''
-                            CREATE TRIGGER IF NOT EXISTS {table}_update AFTER UPDATE ON {table}
-                            BEGIN
-                               INSERT INTO {search_tbl} ({search_tbl}, rowid, {column_list}) 
-                               VALUES ('delete', old.rowid, {old_columns});
-                               INSERT INTO {search_tbl} (rowid, {column_list}) VALUES (new.rowid, {new_columns});
-                            END;        
-                        '''
+                      CREATE TRIGGER IF NOT EXISTS {table}_update AFTER UPDATE ON {table}
+                      BEGIN
+                      INSERT INTO {search_tbl} ({search_tbl}, rowid, {column_list})
+                      VALUES ('delete', old.rowid, {old_columns});
+                      INSERT INTO {search_tbl} (rowid, {column_list})
+                      VALUES (new.rowid, {new_columns});
+                      END;
+                      '''
         }
 
         for q_trigger in query.values():
@@ -202,22 +228,22 @@ class DBWorker:
 
     def create_search_table(self,
                             data_table: str,
+                            source_columns: list[str],
                             search_columns: list[str],
-                            clean_columns: list[str],
-                            col_names: list[str]
+                            extra_columns: list[str]
                             ):
         """
         creates datatable in the database
         :param data_table: name of the existing table
-        :param clean_columns:
+        :param extra_columns:
         :param search_columns:
-        :param col_names:
+        :param source_columns:
             https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_sql.html
         :return: count of data rows loaded
         """
 
         # create empty datatable
-        self.create_table(data_table, *col_names, *clean_columns)
+        self.create_table(data_table, *source_columns, *extra_columns)
         # create empty database for FTS search
         self.link_search_table(data_table, *search_columns)
         print(f'Datatable: {data_table} successfully created')
@@ -225,7 +251,7 @@ class DBWorker:
     def data_chunk_to_sql(self,
                           chunk,
                           data_table,
-                          sql_loader_settings: dict[str, Any] = {}
+                          sql_loader_settings: dict[str, Any] | None = None
                           ) -> int:
         """
         :param data_table:
@@ -266,7 +292,7 @@ class DBWorker:
                      data_table: str,
                      search_columns: list,
                      clean_columns: list,
-                     ) -> List[sqlite3.Row]:
+                     ) -> List[sqlite3.Row] | None:
         """
         Get rows with NULL values for defined columns
         :param data_table:

@@ -1,14 +1,14 @@
 import os
-from typing import (Optional)
+from typing import Generator, List, Tuple, Optional
 from pathlib import Path
 import logging
 import traceback
 from time import time, strftime
 import pandas as pd
 from collections.abc import Generator
-from .utils import (
-    get_dir_content
-)
+from .utils import get_dir_content
+
+logger = logging.getLogger(__name__)
 
 
 class CSVWorker:
@@ -31,6 +31,14 @@ class CSVWorker:
         self.sample_data_file = next(self.data_files)
         self.csv_headers = self.get_csv_headers(self.sample_data_file)
 
+    def get_dictionary(self):
+        if not self.dict_path.is_file():
+            self.get_merged_dictionary()
+        return pd.read_csv(
+            filepath_or_buffer=self.dict_path,
+            **self.reader_settings
+        )
+
     def get_csv_headers(self, file) -> list:
         """Counts columns with data in CSV file
         https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
@@ -38,12 +46,10 @@ class CSVWorker:
         """
         # get current settings
         try:
-            cur_rows = None
-            if 'nrows' in self.reader_settings:
-                cur_rows = self.reader_settings.pop('nrows')
+            cur_rows = self.reader_settings.pop('nrows', None)
             csv_column_names = pd.read_csv(filepath_or_buffer=file, nrows=0, **self.reader_settings).columns.tolist()
         except pd.errors.DataError as err:
-            logging.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
             raise err
         else:
             if cur_rows is not None:
@@ -65,7 +71,7 @@ class CSVWorker:
                 for data_chunk in csv_data_reader:
                     yield data_chunk
         except pd.errors.DataError as err:
-            logging.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
             raise err
 
     def get_csv_chunks(self, col_names: list[str]):
@@ -75,7 +81,7 @@ class CSVWorker:
         """
         file = self.sample_data_file
         while file:
-            print(f'Reading file: {file}')
+            logger.info(f'Reading file: {file}')
             yield from self.get_chunk_from_csv(csv_file=file, headers=col_names)
             file = next(self.data_files, False)
 
@@ -86,41 +92,30 @@ class CSVWorker:
         return output_file
 
     @staticmethod
-    def get_files_suffix(compression: str | dict = None):
-        """Возвращает полное расширение файла с учётом сжатия.
-        Всегда нормализует gzip → .gz (стандартное и надёжное расширение).
-        """
+    def get_files_suffix(compression: Optional[str | dict[str, str]]) -> str:
+        """Унифицированный метод для суффикса (убран дубликат)."""
         base = ".csv"
-
-        if compression is None or compression == "infer" or not compression:
+        if not compression or compression == "infer":
             return base
 
-        # Получаем метод сжатия
         if isinstance(compression, dict):
-            method = compression.get("method", "").lower().strip()
+            method = compression.get("method", "").lower()
         else:
-            method = str(compression).lower().strip()
+            method = str(compression).lower()
 
-        # Нормализация gzip (самая частая проблема)
-        if method in ("gzip", ".gzip", "gz", ".gz"):
-            return base + ".gz"
-
-        # Другие популярные сжатия
-        elif method in ("bz2", "bzip2"):
-            return base + ".bz2"
-        elif method in ("xz",):
-            return base + ".xz"
-        elif method in ("zip",):
-            return base + ".zip"
-        elif method in ("zstd",):
-            return base + ".zst"
-
-        else:
-            clean = method.strip(".")
-            return base + "." + clean
-
-
-
+        match method:
+            case "gzip" | "gz":
+                return base + ".gz"
+            case "bz2" | "bzip2":
+                return base + ".bz2"
+            case "xz":
+                return base + ".xz"
+            case "zip":
+                return base + ".zip"
+            case "zstd":
+                return base + ".zst"
+            case _:
+                return base
 
     def get_merged_dictionary(self):
         try:
@@ -140,42 +135,7 @@ class CSVWorker:
         else:
             print(f"Merged dictionary file: '{self.dict_path}' was successfully created")
 
-    def get_clean_params(self,
-                         clean_cols_ids: dict,
-                         search_column_index: dict[int,str],
-                         actions: dict | None = None
-                         ):
-        # read cleaning settings from the dictionary
-        try:
-            clean_params_df = pd.read_csv(
-                filepath_or_buffer=self.dict_path,
-                # usecols=list(actions.values()) + list(clean_cols_ids.values()),
-                # names=list(actions.keys()) + list(clean_cols_ids.keys()),
-                **self.reader_settings
-            )
-            # separate update settings and loop through
-            upd_params_df = clean_params_df.loc[clean_params_df['action'] == 'upd']
-            # looping through dictionary by column
-            # if there are values to be set in that column (not empty rows)
-            # we pass all nonempty rows to cleaner
-            print(f'Data cleaning in progress: [', end='')
-            start_time = time()
-            for col_name in clean_cols_ids.keys():
-                rs = upd_params_df.loc[upd_params_df[col_name].notnull(), [col_name] + ['search_column_idx'] + ['term']]
-                rs['search_column_idx'] = rs['search_column_idx'].apply(pd.to_numeric)
-                rs = rs.values.tolist()
-                result = []
-                for col, search_id, term in rs:
-                    term = '"' + search_column_index[int(search_id)] + '":' + term
-                    result.append([col, term])
-                yield col_name, result
-                print('==', end='')
-        except Exception as err:
-            logging.error(traceback.format_exc())
-            raise err
-        else:
-            print(']')
-            print(f"Data cleaning finished. Elapsed time: {time() - start_time:.2f} seconds")
+
 
     def export_sql_to_csv(self,
                           db_con,
@@ -193,9 +153,7 @@ class CSVWorker:
         :param data_table: str, name of the table to be exported
         :param file_prefix: Name of the output file to be used
         """
-
-        # define base settings for pandas to_CSV
-
+        logger.info(f'Starting export from {data_table} to CSV')
         try:
             file_prefix = file_prefix if file_prefix else data_table
             file_name = self.get_file_name(file_prefix, '{file_index}')
@@ -209,19 +167,18 @@ class CSVWorker:
             row_counter = 0
             file_index = 1
             file = Path(self.export_path, file_name.format(file_index=str(file_index)))
-            print(f'Data writing in progress: [', end='')
+            logger.info('Data writing in progress')
             for data_chunk in pd.read_sql(f'SELECT * FROM {data_table}', db_con, chunksize=sql_chunk_size):
                 row_counter += len(data_chunk.index)
                 if row_counter > max_file_rows * file_index:
                     file_index += 1
                     params['header'] = True  # turn on headers for a new file
                     file = Path(self.export_path, file_name.format(file_index=str(file_index)))
-                    print('.', end='')
                 data_chunk.to_csv(path_or_buf=file, **params)
-                params['header'] = False  # turn of headers if continue
-                print(f'{row_counter:,} rows', end='\r')
+                params['header'] = False
+                logger.debug(f'Exported {row_counter:,} rows')
 
-            print(f']\n{row_counter:,} data rows were successfully exported to: {self.export_path}')
+            logger.info(f'{row_counter:,} data rows were successfully exported to: {self.export_path}')
         except pd.errors.DataError as err:
-            logging.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
             raise err

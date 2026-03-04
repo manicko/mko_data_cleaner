@@ -8,7 +8,7 @@ from pydantic import (
     Field,
     NonNegativeInt,
     StringConstraints,
-    BeforeValidator
+    BeforeValidator, model_validator
 )
 
 
@@ -25,19 +25,53 @@ EncodingStr = Annotated[
 NameConstrained = Annotated[
     str,
     StringConstraints(
-        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
         min_length=1,
         max_length=63,
     ),
 ]
 
 
+# ---------------Dictionary
+class Action(StrEnum):
+    ADD = 'a'
+    REPLACE = 'r'
+    DELETE = 'd'
+
+
+class Match(StrEnum):
+    FULL_MATCH = 'f'
+    PARTIAL_MATCH = 'p'
+    ENDS_WITH = 'e'
+    STARTS_WITH = 's'
+
+class DictColumnsIndexes(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    action: NonNegativeInt = Field(default=0)  # replace, add or delete setting
+    match: NonNegativeInt = Field(default=1)
+    search: NonNegativeInt = Field(default=2)
+    term: NonNegativeInt = Field(default=4)
+
+
+class DataDict(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    extension: DataFileExtension
+    col_indexes: DictColumnsIndexes = DictColumnsIndexes()
+
+
+
+# ---------------Database
 class TableModel(BaseModel):
     table_name: NameConstrained
     column_name: NameConstrained
 
 
-# Logging settings
+class Database(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    table_name: NameConstrained = Field(default='data_table')
+
+
+# ---------------Logging
 class LoggingSettings(BaseModel):
     version: NonNegativeInt = 1
     disable_existing_loggers: bool = False
@@ -45,12 +79,6 @@ class LoggingSettings(BaseModel):
     handlers: dict[str, Any]
     loggers: dict[str, Any]
     root: dict[str, Any]
-
-
-class DataFileExtension(StrEnum):
-    default = "csv"
-    csv = "csv"
-    gz = "gz"
 
 
 class WorkingPaths(BaseModel):
@@ -63,40 +91,17 @@ class WorkingPaths(BaseModel):
     db_file: str = 'data_base/db_example.db'
 
 
+# --------------- Data files
+class DataFileExtension(StrEnum):
+    default = "csv"
+    csv = "csv"
+    gz = "gz"
 
 
 class DataFile(BaseModel):
     model_config = ConfigDict(extra="allow")
     extension: DataFileExtension
     search_cols: list[NonNegativeInt]
-
-
-class DictColumns(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    action: NonNegativeInt = Field(default=0),  # replace, add or delete setting
-    term: NonNegativeInt = Field(default=3)  # search string used after match setting in the SQL query
-
-
-class DataDict(BaseModel):
-    extension: DataFileExtension
-    actions: DictColumns = DictColumns()
-    clean_cols_ids: dict[str, NonNegativeInt]
-
-
-class Database(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    table_name: NameConstrained = Field(default='data_table')
-
-
-class PandasReadCSV(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    sep: str = ';'
-    on_bad_lines: Literal["error", "warn", "skip"] = "skip"
-    encoding: EncodingStr = 'utf-8'
-    index_col: NonNegativeInt | Literal[False] | None = None
-    skiprows: NonNegativeInt | None = False
-    decimal: Literal[',', '.'] = ','
-    header: NonNegativeInt | Literal["infer"] | None = 0
 
 
 class PandasToCSV(BaseModel):
@@ -111,11 +116,24 @@ class PandasToCSV(BaseModel):
     compression: Literal["infer", "gzip", "bz2", "zip", "xz", "zstd"] | None = "gzip"
 
 
+class PandasReadCSV(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    sep: str = ';'
+    on_bad_lines: Literal["error", "warn", "skip"] = "skip"
+    encoding: EncodingStr = 'utf-8'
+    index_col: NonNegativeInt | Literal[False] | None = None
+    skiprows: NonNegativeInt | None = False
+    decimal: Literal[',', '.'] = ','
+    header: NonNegativeInt | Literal["infer"] | None = 0
+
+
 class ReadCSV(BaseModel):
     from_csv: PandasReadCSV
 
+
 class WriteCSV(BaseModel):
     to_csv: PandasToCSV
+
 
 class DataSettings(BaseModel):
     data_paths: WorkingPaths

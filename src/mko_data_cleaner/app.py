@@ -9,7 +9,7 @@ import typer
 from rich.console import Console
 
 from mko_data_cleaner.core.init_service import init_project
-from mko_data_cleaner.core.services import app_service
+from mko_data_cleaner.core.app_service import app_service
 from mko_data_cleaner.core.utils import list_files_in_directory
 
 sys.stdout.reconfigure(line_buffering=True)

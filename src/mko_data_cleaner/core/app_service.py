@@ -2,12 +2,13 @@ import logging.config
 from pathlib import Path
 from datetime import datetime
 from functools import cached_property
-
+from mko_data_cleaner.core.errors import ConfigError, DataValidationError
 import mko_data_cleaner.core.utils as utils
 from mko_data_cleaner.core.models import DataSettings, LoggingSettings
 from mko_data_cleaner.core.paths import APP_PATHS, AppPaths, PathResolver
-from mko_data_cleaner.core.csv_woker import CSVWorker
-from mko_data_cleaner.core.db_woker import DBWorker
+from mko_data_cleaner.core.csv_service import CSVWorker
+from mko_data_cleaner.core.db_service import DBWorker
+from mko_data_cleaner.core.dict_service import MappingDict
 
 class AppService:
     def __init__(self, app_paths: AppPaths, resolver: PathResolver):
@@ -22,7 +23,11 @@ class AppService:
 
     @cached_property
     def app_config(self) -> DataSettings:
-        return DataSettings(**utils.yaml_to_dict(self.app_paths.app_config))
+        config_data = utils.yaml_to_dict(self.app_paths.app_config)
+        try:
+            return DataSettings(**config_data)
+        except DataValidationError as e:
+            raise ConfigError(f"Invalid config: {e}") from e
 
     @property
     def base_path(self) -> Path:
@@ -84,55 +89,65 @@ class AppService:
             export_settings=self.app_config.export_settings.to_csv.model_dump()
         )
         #
-        sample_data_headers = utils.clean_names(*csv_worker.csv_headers)
+        mapping_data = csv_worker.get_dictionary()
+        sample_data_headers = csv_worker.csv_headers
 
-        # get dictionary params
+        mapping_dict = MappingDict(
+            data = mapping_data,
+            col_indexes=self.app_config.dict_file_settings.col_indexes,
+            source_headers=sample_data_headers)
+
+        # # get dictionary params
+
+
         search_cols_index = utils.get_names_index(sample_data_headers, self.app_config.data_file_settings.search_cols)
-        search_cols = list(search_cols_index.values())
-        actions =  self.app_config.dict_file_settings.actions
-        clean_cols_ids = self.app_config.dict_file_settings.clean_cols_ids
-        clean_cols = list(clean_cols_ids.keys())
 
+
+
+
+
+        print('here')
+        print(mapping_dict.search_columns_list, mapping_dict.extra_columns_list, sample_data_headers)
         # DB settings
+
         table_name = self.app_config.database_settings.table_name
+
         db_worker = DBWorker(self.db_path, table_name)
+
 
         # creating database, datatable, search table
         db_worker.create_search_table(
             data_table=table_name,
-            search_columns=search_cols,
-            clean_columns=clean_cols,
-            col_names=sample_data_headers,
+            source_columns=sample_data_headers,
+            search_columns=mapping_dict.search_columns_list,
+            extra_columns= mapping_dict.extra_columns_list,
         )
 
-        # loading data to database
-        rows_count = 0
-        for chunk in csv_worker.get_csv_chunks(sample_data_headers):
-            rows_count += db_worker.data_chunk_to_sql(chunk, table_name)
-
-        print(f"{rows_count:,} rows were loaded to '{table_name}'")
-
-        if not self.dict_path.is_file():
-            csv_worker.get_merged_dictionary()
+        # # loading data to database
+        # rows_count = 0
+        # for chunk in csv_worker.get_csv_chunks(sample_data_headers):
+        #     rows_count += db_worker.data_chunk_to_sql(chunk, table_name)
+        #
+        # print(f"{rows_count:,} rows were loaded to '{table_name}'")
 
         # generate parameters to search and update columns
-        params = csv_worker.get_clean_params(
-            actions=actions.model_dump(),
-            clean_cols_ids=clean_cols_ids,
-            search_column_index=search_cols_index
-        )
+        # params = csv_worker.get_action_params(
+        #     actions=actions.model_dump(),
+        #     clean_cols_ids=clean_cols_ids,
+        #     search_column_index=search_cols_index
+        # )
 
-        # looping through search\update params and fill in data
-        for col_name, param in params:
-            db_worker.search_update_query(table_name, col_name, *param)
-
-        # functionality to check if some rows are still empty after cleaning
-        # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
-
-        csv_worker.export_sql_to_csv(
-            db_con=db_worker.db_con,
-            data_table=table_name
-        )
+        # # looping through search\update params and fill in data
+        # for col_name, param in params:
+        #     db_worker.search_update_query(table_name, col_name, *param)
+        #
+        # # functionality to check if some rows are still empty after cleaning
+        # # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
+        #
+        # csv_worker.export_sql_to_csv(
+        #     db_con=db_worker.db_con,
+        #     data_table=table_name
+        # )
 
         end_time = datetime.now().replace(microsecond=0)
         print(
