@@ -1,124 +1,162 @@
-import pandas as pd
-from mko_data_cleaner.core.models import DictColumnsIndexes
-from functools import cached_property
+import polars as pl
+
+from mko_data_cleaner.core.models import DictColumnsIndexes, ActionType
+
 import logging
-from time import time
-import traceback
 
 logger = logging.getLogger(__name__)
 
 
 class MappingDict:
-    def __init__(self, data: pd.DataFrame, col_indexes: DictColumnsIndexes, source_headers: list[str]):
+    def __init__(self, data: pl.DataFrame, action_col_indexes: DictColumnsIndexes):
         self.data = data
-        self.col_indexes = col_indexes.model_copy()
-        self.source_headers = source_headers.copy()
+        self.extra_col_names: list = []
+        self._headers = list(self.data.columns)
+        self.action_col_indexes = self._set_col_indexed(action_col_indexes)
+        self._prepare_mapping()
+        self._table_columns: list[str] | None = None
 
-    @cached_property
-    def extra_columns_list(self) -> list[str]:
-        """Returns list of column names presented after term column by index."""
+    @property
+    def headers(self):
+        return self._headers
 
-        start_idx = self.col_indexes.term
-        candidate_columns = self.data.columns[start_idx + 1:]
+    @staticmethod
+    def _set_col_indexed(action_col_indexes: DictColumnsIndexes) -> dict[str, int]:
+        return dict(sorted(action_col_indexes.model_dump().items(), key=lambda x: x[1]))
 
-        non_empty_columns = [
-            col for col in candidate_columns
-            if self.data[col].notna().any()
-        ]
-        return non_empty_columns
+    @headers.setter
+    def headers(self, *extra_cols_names: str) -> None:
+        if len(extra_cols_names) == len(self.extra_col_names):
+            self._headers = list(self.action_col_indexes.keys())
+            self._headers += list(extra_cols_names)
+            try:
+                self.data.columns = self.headers.copy()
+            except Exception as err:
+                logger.error(err)
+                raise err
+    def get_search_columns(self):
+        return self.data["column_name"].unique().to_list()
 
-    @cached_property
-    def source_search_col_indexes(self) -> list[int]:
-        column_index = self.col_indexes.search
-        series = self.data.iloc[:, column_index].dropna().astype(str).str.strip()
+    @staticmethod
+    def _drop_empty_columns(_df: pl.DataFrame) -> pl.DataFrame:
+        return _df[[s.name for s in _df if not (s.null_count() == _df.height)]]
+
+    def get_data_mapping_by_action(self, action_type: ActionType | str) -> pl.DataFrame:
         try:
-            int_series = series.astype(int)
-        except Exception as e:
-            raise ValueError(
-                f"Column '{column_index}' contains non-integer values"
-            ) from e
-        return list(set(map(int, int_series.unique())))
+            return self.data.filter(pl.col('action') == action_type)
+        except Exception as err:
+            logger.error(err)
+            raise err
 
-    @cached_property
-    def search_columns_list(self) -> list[str]:
-        return [self.source_headers[i] for i in self.source_search_col_indexes]
+    def _prepare_mapping(self):
+        # First we extract the action and nonempty data mapping columns:
+        action_names = list(self.action_col_indexes.keys())
+        action_idx = list(self.action_col_indexes.values())
+        data_start_idx = max(action_idx) + 1
 
-    def get_action_params(
+        # ----- all cols after max action index are used as data mapping columns
+        col_candidates = action_idx + list(range(data_start_idx, self.data.width))
+        df = self.data[:, col_candidates]
+
+        # ------ keep only non-empty columns
+        df = self._drop_empty_columns(df)
+        self.extra_col_names = df.columns[len(action_idx):]
+
+        df.columns = action_names + self.extra_col_names
+
+        self.data = df
+
+    def build_mapping(self, *tbl_columns: str, extra_col_names: list[str]):
+        self._table_columns = list(tbl_columns)
+        # update extra_col_names with names from db
+        self.extra_col_names = extra_col_names.copy()
+        # add fts5_search_columns
+        self.data = self._build_query(self._table_columns)
+
+    def _build_query(
             self,
-            clean_cols_ids: dict[str, int],
-            search_column_index: dict[int, str]
-    ):
+            tbl_names: list[str],
+            term_col: str = "term",
+            search_col: str = "search",
+            match_type_col: str = "match",
+            pattern_col: str = "pattern",
+            column_name_col: str = "column_name",
+    ) -> pl.DataFrame:
         """
-        Generates structured cleaning rules.
+        Build mapping table for SQL LIKE matching.
 
-        Returns:
-            Generator[dict]: {
-                "action": str,
-                "match_expr": str,
-                "search_column": str,
-                "columns": list[tuple[str, str]]
-            }
+        Output dataframe contains:
+            column_name – name of column in data_table to search
+            pattern     – LIKE pattern
+
+        Parameters
+        ----------
+        tbl_names : list[str]
+            list of searchable column names
+
+        term_col : str
+            column containing search term
+
+        search_col : str
+            column containing index of search column
+
+        match_type_col : str
+            search type:
+                f – full match
+                p – partial
+                s – starts with
+                e – ends with
+
+        pattern_col : str
+            name of resulting pattern column
         """
 
-        try:
-            print("Data cleaning rules parsing: [", end="")
-            start_time = time()
-            match_expr = ''
-            for _, row in self.data.iterrows():
+        # map column index → column name
+        name_map_df = pl.DataFrame({
+            search_col: list(range(len(tbl_names))),
+            column_name_col: tbl_names
+        })
 
-                action = str(row.iloc[self.col_indexes.action])
-                match_type = str(row.iloc[self.col_indexes.match])
-                search_idx = int(row.iloc[self.col_indexes.search])
-                term = str(row.iloc[self.col_indexes.term])
+        df = self.data.join(
+            name_map_df,
+            on=search_col,
+            how="left"
+        )
 
-                if action not in {"a", "r", "d"}:
-                    continue
+        pattern_expr = self._build_search_like_pattern(
+            match_type_col,
+            term_col
+        )
 
-                if match_type not in {"f", "p", "s", "e"}:
-                    continue
+        df = df.with_columns(
+            pattern_expr.str.to_uppercase().alias(pattern_col)
+        )
 
-                search_column = search_column_index[search_idx]
+        return df
 
-                # ---- FTS MATCH expression generation ----
-                match match_type:
-                    case "f":  # full match
-                        match_expr = f'"{term}"'
-                    case "p":  # partial
-                        match_expr = term
-                    case "s":  # starts with
-                        match_expr = f'"{term}*"'
-                    case "e":  # ends with
-                        match_expr = f'"*{term}"'
-                    case _:
-                        continue
+    @staticmethod
+    def _build_search_like_pattern(match_type_col: str, term_col: str) -> pl.Expr:
+            """
+            Convert match type to SQL LIKE pattern.
 
-                # ---- Collect all non-null target columns ----
-                target_columns = []
+            f → term
+            p → %term%
+            s → term%
+            e → %term
+            """
 
-                for col_name in clean_cols_ids.keys():
-                    value = row.get(col_name)
-                    if pd.notna(value):
-                        target_columns.append((col_name, str(value)))
+            return (
+                pl.when(pl.col(match_type_col) == "f")
+                .then(pl.col(term_col))
 
-                if not target_columns or len(match_expr) == 0:
-                    continue
+                .when(pl.col(match_type_col) == "p")
+                .then(pl.concat_str([pl.lit("%"), pl.col(term_col), pl.lit("%")]))
 
-                yield {
-                    "action": action,
-                    "match_expr": match_expr,
-                    "search_column": search_column,
-                    "columns": target_columns
-                }
+                .when(pl.col(match_type_col) == "s")
+                .then(pl.concat_str([pl.col(term_col), pl.lit("%")]))
 
-                print("==", end="")
+                .when(pl.col(match_type_col) == "e")
+                .then(pl.concat_str([pl.lit("%"), pl.col(term_col)]))
 
-        except Exception:
-            logging.error(traceback.format_exc())
-            raise
-
-        else:
-            print("]")
-            print(
-                f"Rules parsing finished. "
-                f"Elapsed time: {time() - start_time:.2f} seconds"
+                .otherwise(None)
             )

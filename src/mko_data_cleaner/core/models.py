@@ -33,17 +33,18 @@ NameConstrained = Annotated[
 
 
 # ---------------Dictionary
-class Action(StrEnum):
+class ActionType(StrEnum):
     ADD = 'a'
     REPLACE = 'r'
     DELETE = 'd'
 
 
-class Match(StrEnum):
+class MatchType(StrEnum):
     FULL_MATCH = 'f'
     PARTIAL_MATCH = 'p'
     ENDS_WITH = 'e'
     STARTS_WITH = 's'
+
 
 class DictColumnsIndexes(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -57,7 +58,6 @@ class DataDict(BaseModel):
     model_config = ConfigDict(extra="allow")
     extension: DataFileExtension
     col_indexes: DictColumnsIndexes = DictColumnsIndexes()
-
 
 
 # ---------------Database
@@ -101,38 +101,38 @@ class DataFileExtension(StrEnum):
 class DataFile(BaseModel):
     model_config = ConfigDict(extra="allow")
     extension: DataFileExtension
-    search_cols: list[NonNegativeInt]
+    index_column: str =  None
+    date_column: str = None #'researchDate' researchMonth
 
 
-class PandasToCSV(BaseModel):
+class PolarsWriteCSV(BaseModel):
     model_config = ConfigDict(extra="allow")
-    sep: Literal[',', ';'] = ','
-    chunksize: NonNegativeInt | None = 10000
-    encoding: EncodingStr = 'utf-8-sig'
-    decimal: Literal[',', '.'] = ','
-    header: bool = True
-    index: bool = False
-    mode: Literal["w", "x", "a"] | None = "a"
-    compression: Literal["infer", "gzip", "bz2", "zip", "xz", "zstd"] | None = "gzip"
-
-
-class PandasReadCSV(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    sep: str = ';'
-    on_bad_lines: Literal["error", "warn", "skip"] = "skip"
+    separator: str = ';'
     encoding: EncodingStr = 'utf-8'
-    index_col: NonNegativeInt | Literal[False] | None = None
-    skiprows: NonNegativeInt | None = False
-    decimal: Literal[',', '.'] = ','
-    header: NonNegativeInt | Literal["infer"] | None = 0
+    decimal_comma: bool = True
+    include_header: bool = True
+    ignore_errors: bool = True
+    chunk_size: NonNegativeInt = 10000
+    compression: Literal["gzip", "bz2", "zip", "xz", "zstd"] | None = "gzip"
+
+
+class PolarsReadCSV(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    separator: str = ';'
+    encoding: EncodingStr = 'utf-8'
+    skip_rows: NonNegativeInt | None = 0
+    decimal_comma: bool = True
+    has_header: bool = True
+    ignore_errors: bool = True
+    rechunk: bool = False
 
 
 class ReadCSV(BaseModel):
-    from_csv: PandasReadCSV
+    from_csv: PolarsReadCSV
 
 
 class WriteCSV(BaseModel):
-    to_csv: PandasToCSV
+    to_csv: PolarsWriteCSV
 
 
 class DataSettings(BaseModel):

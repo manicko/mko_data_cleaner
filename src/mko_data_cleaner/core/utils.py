@@ -1,27 +1,41 @@
-from pathlib import Path
 from re import match, sub
 import logging
 import time
-from collections.abc import Generator
 from os import PathLike
 from pathlib import Path
 from typing import Any, Literal
 
+from mko_data_cleaner.core.errors import WrongDataSettings
+from mko_data_cleaner.core.models import ActionType, MatchType
 import yaml
 
 from pandas import DataFrame
 
-
-
 logger = logging.getLogger(__name__)
-
 
 # pattern used to check validity of column and table name before adding them
 ALLOWED_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
 RESTRICTED_PATTERN = r'[#@$%&~*+=<>^`|(){}?!;:,.-\/"]'
 
 
-def get_names_index(names: list[str], index: list[int]) -> dict[int,str]:
+def parse_action(value: str) -> ActionType | None:
+    """Safely parse Action enum."""
+    try:
+        return ActionType(value)
+    except ValueError:
+        return None
+
+
+def parse_match(value: str) -> MatchType | None:
+    """Safely parse Match enum."""
+    try:
+        return MatchType(value)
+    except ValueError:
+        return None
+
+
+
+def get_names_index(names: list[str], index: list[int]) -> dict[int, str]:
     index = list(map(int, index))
     return {i: names[i] for i in index}
 
@@ -34,12 +48,22 @@ def is_valid_name(name: str, pattern: str = ALLOWED_PATTERN) -> bool:
     :param pattern: str, regex pattern for name validation. If omitted global ALLOWED_PATTERN is used
     :return: bool, True or False
     """
-    if not isinstance(name, str) or not match(pattern, str(name)):
-        print(f"The name: {str(name)} is not valid, "
-              f"use lowercase english letters and digits")
+    if not isinstance(name, str):
+        raise ValueError(f"Invalid name: {name}, should be a string, {type(name)} is given")
+
+    if not match(pattern, str(name)):
+        logger.info(f"The name: {str(name)} is not valid, "
+              f"use the allowed pattern {ALLOWED_PATTERN}.")
         return False
     return True
 
+def validate_names(*names: str) -> None:
+    """Validate table and column names."""
+    invalid = [name for name in names if not is_valid_name(name)]
+    if invalid:
+        raise WrongDataSettings(
+            f"Invalid names: {', '.join(invalid)}"
+        )
 
 def make_valid(name: str, pattern: str = RESTRICTED_PATTERN) -> str:
     return sub(pattern, '_', name)
@@ -68,8 +92,6 @@ def clean_names(*names: str) -> list[str]:
     return valid_names
 
 
-
-
 def get_dir_content(path: str | PathLike, ext: str = 'yaml', subfolders=True):
     try:
         subfolders = '**/' if subfolders else ''
@@ -78,7 +100,6 @@ def get_dir_content(path: str | PathLike, ext: str = 'yaml', subfolders=True):
         raise err
     else:
         return files
-
 
 
 def get_files_suffix(compression: str | dict = None):
@@ -116,17 +137,17 @@ def get_files_suffix(compression: str | dict = None):
 
 
 def csv_to_file(
-    data_frame: DataFrame,
-    csv_path_out: PathLike,
-    file_prefix: str = "",
-    compression: (
-        Literal["infer", "gzip", "bz2", "zip", "xz", "zstd", "tar"]
-        | None
-        | dict[str, Any]
-    ) = "infer",
-    add_time: bool = True,
-    *args,
-    **kwargs,
+        data_frame: DataFrame,
+        csv_path_out: PathLike,
+        file_prefix: str = "",
+        compression: (
+                Literal["infer", "gzip", "bz2", "zip", "xz", "zstd", "tar"]
+                | None
+                | dict[str, Any]
+        ) = "infer",
+        add_time: bool = True,
+        *args,
+        **kwargs,
 ):
     time_str = ""
     if add_time:
@@ -151,12 +172,10 @@ def csv_to_file(
         logger.warning(f"File report {out_file} already exists. Skip it.")
 
 
-
-
 def list_files_in_directory(
-    path: str | PathLike[str],
-    extensions: tuple[str, ...] = ("yaml", "json"),
-    include_subfolders: bool = False,
+        path: str | PathLike[str],
+        extensions: tuple[str, ...] = ("yaml", "json"),
+        include_subfolders: bool = False,
 ) -> list[Path]:
     """
     Lists files in a directory with specific extensions.
@@ -199,7 +218,6 @@ def ensure_path_exists(path: Path) -> None:
             path.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         raise ValueError(f"Failed to create path {path}: {e}") from e
-
 
 
 def yaml_to_dict(file: str | PathLike) -> dict[str, Any] | None:

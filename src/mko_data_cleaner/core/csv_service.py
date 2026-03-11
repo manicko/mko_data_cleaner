@@ -1,112 +1,241 @@
 import os
-from typing import Generator, List, Tuple, Optional
-from pathlib import Path
 import logging
 import traceback
-from time import time, strftime
-import pandas as pd
-from collections.abc import Generator
+from pathlib import Path
+from typing import Generator, Optional, Literal
+from time import strftime
+
+import polars as pl
+import sqlite3
+
 from .utils import get_dir_content
 
 logger = logging.getLogger(__name__)
 
 
 class CSVWorker:
-    def __init__(self, data_path: str | os.PathLike,
-                 data_settings: dict,
-                 reader_settings: dict,
-                 dict_path: str | os.PathLike,
-                 dict_settings: dict,
-                 export_path: str | os.PathLike,
-                 export_settings: dict
-                 ):
+    """
+    Worker for processing CSV files using Polars.
+
+    Features:
+        - streaming CSV reading
+        - gzip support
+        - SQLite export
+        - dictionary merging
+    """
+
+    CHUNK_SIZE = 10000
+
+    def __init__(
+        self,
+        data_path: str | os.PathLike,
+        data_settings: dict,
+        reader_settings: dict,
+        dict_path: str | os.PathLike,
+        dict_settings: dict,
+        export_path: str | os.PathLike,
+        export_settings: dict,
+    ):
+
         self.data_settings = data_settings
-        self.export_path = Path(export_path)
         self.reader_settings = reader_settings
-        self.export_settings = export_settings
         self.dict_path = Path(dict_path)
         self.dict_settings = dict_settings
+        self.export_path = Path(export_path)
+        self.export_settings = export_settings
 
-        self.data_files = get_dir_content(data_path, ext=self.data_settings.get('extension', 'csv'))
-        self.sample_data_file = next(self.data_files)
-        self.csv_headers = self.get_csv_headers(self.sample_data_file)
-
-    def get_dictionary(self):
-        if not self.dict_path.is_file():
-            self.get_merged_dictionary()
-        return pd.read_csv(
-            filepath_or_buffer=self.dict_path,
-            **self.reader_settings
+        self.data_files = get_dir_content(
+            data_path,
+            ext=self.data_settings.get("extension", "csv"),
         )
+        self.sample_data_file = next(self.data_files)
+        self.source_headers = self.get_csv_headers(self.sample_data_file)
 
-    def get_csv_headers(self, file) -> list:
-        """Counts columns with data in CSV file
-        https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html
-        :return: integer count of columns with data
-        """
-        # get current settings
-        try:
-            cur_rows = self.reader_settings.pop('nrows', None)
-            csv_column_names = pd.read_csv(filepath_or_buffer=file, nrows=0, **self.reader_settings).columns.tolist()
-        except pd.errors.DataError as err:
-            logger.error(traceback.format_exc())
-            raise err
-        else:
-            if cur_rows is not None:
-                self.reader_settings['nrows'] = cur_rows
-            return csv_column_names
+    # ---------------------------------------------------------
+    # CSV
+    # ---------------------------------------------------------
 
-    def get_chunk_from_csv(self, csv_file, headers) -> Generator:
-        """
-        Generator to read data from CSV file in chunks
-        :return: iterator
-        """
+    def get_csv_headers(self, file: str | Path) -> list[str]:
+        """Read CSV headers using Polars."""
+
         try:
-            with pd.read_csv(
-                    filepath_or_buffer=csv_file,
-                    names=headers,
-                    chunksize=10000,
-                    **self.reader_settings
-            ) as csv_data_reader:
-                for data_chunk in csv_data_reader:
-                    yield data_chunk
-        except pd.errors.DataError as err:
+            df = pl.read_csv(file, n_rows=0, **self.reader_settings)
+            return df.columns
+
+        except Exception as err:
             logger.error(traceback.format_exc())
             raise err
 
-    def get_csv_chunks(self, col_names: list[str]):
+    def _read_csv_in_chunks(self, csv_file, headers) -> Generator[pl.DataFrame, None, None]:
         """
-        :param col_names:
-        :return: Pandas data chunk
+        Stream CSV chunks using Polars.
+
+        Returns
+        -------
+        Generator[pl.DataFrame]
         """
+        try:
+            df = pl.read_csv_batched(
+                csv_file,
+                batch_size=self.CHUNK_SIZE,
+                new_columns=headers,
+                **self.reader_settings,
+            )
+            while True:
+                batches = df.next_batches(1)
+                if not batches:
+                    break
+                yield batches[0]
+
+        except Exception as err:
+            logger.error(traceback.format_exc())
+            raise err
+
+    def get_data_chunks(self, col_names: list[str]) -> Generator[pl.DataFrame, None, None]:
+        """Yield CSV chunks from all files."""
         file = self.sample_data_file
         while file:
-            logger.info(f'Reading file: {file}')
-            yield from self.get_chunk_from_csv(csv_file=file, headers=col_names)
+            logger.info(f"Reading file: {file}")
+            yield from self._read_csv_in_chunks(file, col_names)
             file = next(self.data_files, False)
 
-    def get_file_name(self, name_prefix, name_suffix):
-        ext = self.get_files_suffix(self.export_settings['compression'])
-        time_str = strftime("%Y%m%d-%H%M%S")
-        output_file = f'{name_prefix}_{time_str}_{name_suffix}{ext}'
-        return output_file
 
     @staticmethod
-    def get_files_suffix(compression: Optional[str | dict[str, str]]) -> str:
-        """Унифицированный метод для суффикса (убран дубликат)."""
+    def data_chunk_to_sql(
+            chunk: pl.DataFrame,
+            table_name: str,
+            db_con: sqlite3.Connection,
+            if_exists: Literal["append", "replace", "fail"] = "append",
+            use_fallback: bool = False,
+    ) -> int:
+        """
+        Write Polars DataFrame chunk into SQLite table.
+
+        Prefers Polars write_database; falls back to executemany.
+
+        Parameters
+        ----------
+        chunk : pl.DataFrame
+            Data chunk.
+        table_name : str
+            Target table.
+        db_con : sqlite3.Connection
+            Open SQLite connection.
+        if_exists : {"append","replace","fail"}
+            Table behaviour.
+        use_fallback : bool
+            Force executemany.
+
+        Returns
+        -------
+        int
+            Inserted rows.
+        """
+
+        inserted_rows = 0
+
+        if not use_fallback:
+            try:
+
+                uri = f"sqlite:///{db_con.execute('PRAGMA database_list').fetchone()[2]}"
+
+                inserted_rows = chunk.write_database(
+                    table_name=table_name,
+                    connection=uri,
+                    if_table_exists=if_exists,
+                    engine="sqlalchemy",
+                )
+
+                logger.debug(f"write_database → {inserted_rows:,} rows")
+
+                return inserted_rows
+
+            except Exception as err:
+                logger.warning(
+                    f"write_database failed ({err}). Switching to executemany."
+                )
+                use_fallback = True
+
+        if use_fallback:
+            try:
+                cursor = db_con.cursor()
+                cols = chunk.columns
+                placeholders = ",".join(["?"] * len(cols))
+                sql = f"""
+                INSERT INTO {table_name}
+                ({",".join(cols)})
+                VALUES ({placeholders})
+                """
+                cursor.executemany(
+                    sql,
+                    chunk.iter_rows()
+                )
+                inserted_rows = chunk.height
+                logger.debug(f"executemany → {inserted_rows:,} rows")
+
+            except Exception as err:
+                db_con.rollback()
+                logger.error(f"executemany failed: {err}")
+                raise
+
+        return inserted_rows
+
+    # ---------------------------------------------------------
+    # DICTIONARY
+    # ---------------------------------------------------------
+
+    def get_dictionary(self) -> pl.DataFrame:
+        if not self.dict_path.is_file():
+            self.get_merged_dictionary()
+        return pl.read_csv(self.dict_path, **self.reader_settings)
+
+    def get_merged_dictionary(self):
+        try:
+            dfs = []
+            for file in get_dir_content(
+                self.dict_path.parent,
+                self.dict_settings.get("extension", ".csv"),
+            ):
+                df = pl.read_csv(file, **self.reader_settings)
+                dfs.append(df)
+            merged = pl.concat(dfs)
+            merged = merged.unique()
+            merged = merged.sort("search_column_idx")
+            merged.write_csv(
+                self.dict_path,
+                separator=";",
+                include_header=True,
+            )
+
+        except Exception as err:
+            logger.error(traceback.format_exc())
+            raise err
+
+        else:
+            logger.info(f"Merged dictionary created: {self.dict_path}")
+
+    # ---------------------------------------------------------
+    # FILE NAMING
+    # ---------------------------------------------------------
+
+    def get_file_name(self, name_prefix, name_suffix):
+        ext = self.get_files_suffix(self.export_settings["compression"])
+        time_str = strftime("%Y%m%d-%H%M%S")
+        return f"{name_prefix}_{time_str}_{name_suffix}{ext}"
+
+    @staticmethod
+    def get_files_suffix(compression: Optional[str | dict]) -> str:
         base = ".csv"
         if not compression or compression == "infer":
             return base
-
         if isinstance(compression, dict):
             method = compression.get("method", "").lower()
         else:
             method = str(compression).lower()
-
         match method:
             case "gzip" | "gz":
                 return base + ".gz"
-            case "bz2" | "bzip2":
+            case "bz2":
                 return base + ".bz2"
             case "xz":
                 return base + ".xz"
@@ -117,68 +246,54 @@ class CSVWorker:
             case _:
                 return base
 
-    def get_merged_dictionary(self):
-        try:
-            dict_list = []
-            for file in get_dir_content(self.dict_path.parent, self.dict_settings.get('extension', '.csv')):
-                dict_data = pd.read_csv(filepath_or_buffer=file, **self.reader_settings)
-                # dict_data['file'] = file.stem
-                dict_list.append(dict_data)
-                # print(f"'{file}' was loaded")
-            df = pd.concat(dict_list, ignore_index=True)
-            df.drop_duplicates(inplace=True, subset=df.columns.difference(['file']))
-            df.sort_values(by=['search_column_idx'], ascending=True, inplace=True)
-            df.to_csv(path_or_buf=self.dict_path, decimal=',', encoding='utf-8-sig', sep=';', index=False)
-        except Exception as err:
-            logging.error(traceback.format_exc())
-            raise err
-        else:
-            print(f"Merged dictionary file: '{self.dict_path}' was successfully created")
+    # ---------------------------------------------------------
+    # EXPORT SQLITE -> CSV
+    # ---------------------------------------------------------
 
-
-
-    def export_sql_to_csv(self,
-                          db_con,
-                          data_table: str,
-                          file_prefix: Optional[str] = None,
-                          ):
+    def export_sql_to_csv(
+        self,
+        db_con: sqlite3.Connection,
+        data_table: str,
+        file_prefix: Optional[str] = None,
+    ):
         """
-        Exports SQLights data_table using pandas. Output filename will have timestamp.
-        :param db_con: SQLAlchemy connectable, str, or sqlite3 connection
-        Using SQLAlchemy makes it possible to use any DB supported by that
-        library. If a DBAPI2 object, only sqlite3 is supported. The user is responsible
-        for engine disposal and connection closure for the SQLAlchemy connectable; str
-        connections are closed automatically. See
-        `here <https://docs.sqlalchemy.org/en/13/core/connections.html>`_.
-        :param data_table: str, name of the table to be exported
-        :param file_prefix: Name of the output file to be used
+        Export SQLite table to gzip CSV using Polars.
         """
-        logger.info(f'Starting export from {data_table} to CSV')
-        try:
-            file_prefix = file_prefix if file_prefix else data_table
-            file_name = self.get_file_name(file_prefix, '{file_index}')
 
+        logger.info(f"Starting export from {data_table}")
+
+        try:
+            file_prefix = file_prefix or data_table
+            file_name = self.get_file_name(file_prefix, "{file_index}")
             params = self.export_settings.copy()
-
-            # if used with zip sql_chunk_size MUST be the same as max_file_rows
-            # due to the bug in Pandas module
-            max_file_rows = params.pop('chunksize', 10000)
-            sql_chunk_size = 5000
-            row_counter = 0
+            max_rows = params.pop("chunksize", 10000)
             file_index = 1
-            file = Path(self.export_path, file_name.format(file_index=str(file_index)))
-            logger.info('Data writing in progress')
-            for data_chunk in pd.read_sql(f'SELECT * FROM {data_table}', db_con, chunksize=sql_chunk_size):
-                row_counter += len(data_chunk.index)
-                if row_counter > max_file_rows * file_index:
-                    file_index += 1
-                    params['header'] = True  # turn on headers for a new file
-                    file = Path(self.export_path, file_name.format(file_index=str(file_index)))
-                data_chunk.to_csv(path_or_buf=file, **params)
-                params['header'] = False
-                logger.debug(f'Exported {row_counter:,} rows')
+            row_counter = 0
+            cursor = db_con.cursor()
+            cursor.execute(f"SELECT * FROM {data_table}")
+            columns = [col[0] for col in cursor.description]
+            rows = cursor.fetchmany(max_rows)
 
-            logger.info(f'{row_counter:,} data rows were successfully exported to: {self.export_path}')
-        except pd.errors.DataError as err:
+            while rows:
+                df = pl.DataFrame(rows, schema=columns)
+                row_counter += df.height
+
+                file = Path(
+                    self.export_path,
+                    file_name.format(file_index=file_index),
+                )
+
+                df.write_csv(
+                    file,
+                    compression=params.get("compression", "gzip"),
+                )
+
+                logger.debug(f"Exported {row_counter:,} rows")
+                file_index += 1
+                rows = cursor.fetchmany(max_rows)
+            logger.info(f"{row_counter:,} rows exported")
+
+        except Exception as err:
             logger.error(traceback.format_exc())
             raise err
+

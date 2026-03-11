@@ -1,14 +1,19 @@
-import logging.config
 from pathlib import Path
 from datetime import datetime
 from functools import cached_property
 from mko_data_cleaner.core.errors import ConfigError, DataValidationError
 import mko_data_cleaner.core.utils as utils
-from mko_data_cleaner.core.models import DataSettings, LoggingSettings
+from mko_data_cleaner.core.models import DataSettings, LoggingSettings, ActionType
 from mko_data_cleaner.core.paths import APP_PATHS, AppPaths, PathResolver
 from mko_data_cleaner.core.csv_service import CSVWorker
 from mko_data_cleaner.core.db_service import DBWorker
 from mko_data_cleaner.core.dict_service import MappingDict
+
+import logging
+import logging.config
+
+logger = logging.getLogger("app_service")
+
 
 class AppService:
     def __init__(self, app_paths: AppPaths, resolver: PathResolver):
@@ -43,23 +48,21 @@ class AppService:
             logging.error(f'File not found: {base_path}, {e}')
             raise e
 
-
     @property
     def import_path(self) -> Path:
-        return Path(self.base_path , self.app_config.data_paths.import_folder)
+        return Path(self.base_path, self.app_config.data_paths.import_folder)
 
     @property
     def export_path(self) -> Path:
-        return Path(self.base_path , self.app_config.data_paths.export_folder)
+        return Path(self.base_path, self.app_config.data_paths.export_folder)
 
     @property
     def dict_path(self) -> Path:
-        return Path(self.base_path , self.app_config.data_paths.dict_file)
+        return Path(self.base_path, self.app_config.data_paths.dict_file)
 
     @property
     def db_path(self) -> Path:
-        return Path(self.base_path , self.app_config.data_paths.db_file)
-
+        return Path(self.base_path, self.app_config.data_paths.db_file)
 
     def prepare_log_paths(self):
         # logger files
@@ -88,56 +91,72 @@ class AppService:
             export_path=self.export_path,
             export_settings=self.app_config.export_settings.to_csv.model_dump()
         )
-        #
-        mapping_data = csv_worker.get_dictionary()
-        sample_data_headers = csv_worker.csv_headers
 
+        # get dictionary params
+        md = csv_worker.get_dictionary()
         mapping_dict = MappingDict(
-            data = mapping_data,
-            col_indexes=self.app_config.dict_file_settings.col_indexes,
-            source_headers=sample_data_headers)
-
-        # # get dictionary params
-
-
-        search_cols_index = utils.get_names_index(sample_data_headers, self.app_config.data_file_settings.search_cols)
-
-
-
-
-
-        print('here')
-        print(mapping_dict.search_columns_list, mapping_dict.extra_columns_list, sample_data_headers)
-        # DB settings
-
-        table_name = self.app_config.database_settings.table_name
-
-        db_worker = DBWorker(self.db_path, table_name)
-
-
-        # creating database, datatable, search table
-        db_worker.create_search_table(
-            data_table=table_name,
-            source_columns=sample_data_headers,
-            search_columns=mapping_dict.search_columns_list,
-            extra_columns= mapping_dict.extra_columns_list,
+            data=md,
+            action_col_indexes=self.app_config.dict_file_settings.col_indexes
         )
 
-        # # loading data to database
-        # rows_count = 0
-        # for chunk in csv_worker.get_csv_chunks(sample_data_headers):
-        #     rows_count += db_worker.data_chunk_to_sql(chunk, table_name)
-        #
-        # print(f"{rows_count:,} rows were loaded to '{table_name}'")
+        # DB settings
+        db_worker = DBWorker(
+            db_file=self.db_path,
+            tbl_name=self.app_config.database_settings.table_name,
+            index_column=self.app_config.data_file_settings.index_column,
+            date_column=self.app_config.data_file_settings.date_column
+        )
 
-        # generate parameters to search and update columns
-        # params = csv_worker.get_action_params(
-        #     actions=actions.model_dump(),
-        #     clean_cols_ids=clean_cols_ids,
-        #     search_column_index=search_cols_index
-        # )
+        # source columns and columns from dictionary
+        db_worker.set_data_tbl_columns(
+            *csv_worker.source_headers,
+            extra_cols=mapping_dict.extra_col_names
+        )
 
-        # # looping through search\update params and fill in data
+        mapping_dict.build_mapping(
+            *db_worker.data_tbl_columns,
+            extra_col_names=db_worker.extra_columns
+        )
+
+        # # create search table using indexes from dictionary
+        db_worker.search_columns = mapping_dict.get_search_columns()
+        db_worker.create_table_with_index()
+
+        # loading data to database
+        rows_count = 0
+        col_count = len(csv_worker.source_headers)
+
+        for chunk in csv_worker.get_data_chunks(db_worker.data_tbl_columns[:col_count]):
+            rows_count += csv_worker.data_chunk_to_sql(
+                chunk,
+                db_worker.data_tbl_name,
+                db_worker.db_con
+            )
+
+        logger.info(f"{rows_count:,} rows were loaded to data table")
+
+        db_worker.update_distinct_table()
+
+        # print(mapping_dict.get_data_mapping_by_action(ActionType.DELETE))
+        # print(mapping_dict.get_data_mapping_by_action(ActionType.ADD))
+        # print(mapping_dict.get_data_mapping_by_action(ActionType.REPLACE))
+
+        # apply replace rules
+        replace_df = mapping_dict.get_data_mapping_by_action(ActionType.REPLACE)
+
+
+        csv_worker.data_chunk_to_sql(
+                mapping_dict.data,
+                'mapping_table',
+                db_worker.db_con
+            )
+
+        db_worker.apply_mapping('mapping_table')
+
+        # # # looping through search\update params and fill in data
+        # for action,match_type, term, col in mapping_dict.get_action_params():
+        #     print(params)
+
         # for col_name, param in params:
         #     db_worker.search_update_query(table_name, col_name, *param)
         #
