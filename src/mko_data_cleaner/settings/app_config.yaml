@@ -12,7 +12,7 @@
   },
   'dict_file_settings': {
     'extension': 'gz',
-    'col_indexes': { # columns' indexes in the file_search containing settings
+    'col_indexes': { # columns' indexes in the mapping dictionary containing settings
       'action': 0,  # update or delete setting
       'match': 1,
       'search': 2,

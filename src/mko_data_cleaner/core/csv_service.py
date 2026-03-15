@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Generator, Optional, Literal
 from time import strftime
 
+
 import polars as pl
 import sqlite3
 
@@ -25,16 +26,17 @@ class CSVWorker:
     """
 
     CHUNK_SIZE = 10000
-
+    DATE_REGEX = r"^\d{4}[-/.]\d{2}[-/.]\d{2}$"
+    DATE_SAMPLE_SIZE = 500
     def __init__(
-        self,
-        data_path: str | os.PathLike,
-        data_settings: dict,
-        reader_settings: dict,
-        dict_path: str | os.PathLike,
-        dict_settings: dict,
-        export_path: str | os.PathLike,
-        export_settings: dict,
+            self,
+            data_path: str | os.PathLike,
+            data_settings: dict,
+            reader_settings: dict,
+            dict_path: str | os.PathLike,
+            dict_settings: dict,
+            export_path: str | os.PathLike,
+            export_settings: dict,
     ):
 
         self.data_settings = data_settings
@@ -65,6 +67,79 @@ class CSVWorker:
         except Exception as err:
             logger.error(traceback.format_exc())
             raise err
+
+    @staticmethod
+    def _is_date_column(
+            series: pl.Series,
+            date_regex: str,
+            threshold: float = 0.8,
+    ) -> bool:
+        """
+        Check if a Series likely contains dates.
+
+        Parameters
+        ----------
+        series : pl.Series
+            Column to test
+        date_regex : str
+            Regex pattern for date detection
+        threshold : float
+            Minimum ratio of matching values
+
+        Returns
+        -------
+        bool
+        """
+
+        sample_size = 500
+        if series.dtype != pl.String:
+            return False
+
+        s = series.head(sample_size).drop_nulls()
+
+        if s.is_empty():
+            return False
+
+        match_ratio = s.str.contains(date_regex).mean()
+
+        return match_ratio >= threshold
+
+    def _detect_date_column(
+            self,
+            df: pl.DataFrame,
+            column: str = None
+    ) -> str | None:
+        """
+        Check if column contains dates and if not or not provided,
+        trying to check automatically.
+
+        Supports formats:
+            DD/MM/YYYY
+            DD.MM.YYYY
+            DD-MM-YYYY
+
+        Returns
+        -------
+        str
+             column_name if detected else None
+        """
+
+        if column:
+            try:
+                series = df[column]
+                if self._is_date_column(series, self.DATE_REGEX):
+                    return column
+            except pl.exceptions.ColumnNotFoundError:
+                logger.error(f"Date column {column} not found.")
+
+        for idx, col in enumerate(df.columns):
+            if self._is_date_column(df[col], self.DATE_REGEX):
+                return col
+        return None
+
+    def check_date_column(self, column: str = None) -> tuple[int, str] | None:
+        df = pl.read_csv(self.sample_data_file, n_rows=self.DATE_SAMPLE_SIZE, **self.reader_settings)
+        return self._detect_date_column(df, column)
 
     def _read_csv_in_chunks(self, csv_file, headers) -> Generator[pl.DataFrame, None, None]:
         """
@@ -98,7 +173,6 @@ class CSVWorker:
             logger.info(f"Reading file: {file}")
             yield from self._read_csv_in_chunks(file, col_names)
             file = next(self.data_files, False)
-
 
     @staticmethod
     def data_chunk_to_sql(
@@ -193,8 +267,8 @@ class CSVWorker:
         try:
             dfs = []
             for file in get_dir_content(
-                self.dict_path.parent,
-                self.dict_settings.get("extension", ".csv"),
+                    self.dict_path.parent,
+                    self.dict_settings.get("extension", ".csv"),
             ):
                 df = pl.read_csv(file, **self.reader_settings)
                 dfs.append(df)
@@ -251,10 +325,11 @@ class CSVWorker:
     # ---------------------------------------------------------
 
     def export_sql_to_csv(
-        self,
-        db_con: sqlite3.Connection,
-        data_table: str,
-        file_prefix: Optional[str] = None,
+            self,
+            db_con: sqlite3.Connection,
+            data_table: str,
+            file_prefix: Optional[str] = None,
+            export_path: Optional[str] = None
     ):
         """
         Export SQLite table to gzip CSV using Polars.
@@ -276,11 +351,11 @@ class CSVWorker:
             rows = cursor.fetchmany(max_rows)
 
             while rows:
-                df = pl.DataFrame(rows, schema=columns, orient="row", schema_overrides = schema_overrides)
+                df = pl.DataFrame(rows, schema=columns, orient="row", schema_overrides=schema_overrides)
                 row_counter += df.height
 
-                file = Path(
-                    self.export_path,
+                file: Path = Path(
+                    export_path or self.export_path,
                     file_name.format(file_index=file_index),
                 )
 
@@ -297,4 +372,3 @@ class CSVWorker:
         except Exception as err:
             logger.error(traceback.format_exc())
             raise err
-

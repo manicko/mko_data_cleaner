@@ -3,7 +3,7 @@ from datetime import datetime
 from functools import cached_property
 from mko_data_cleaner.core.errors import ConfigError, DataValidationError
 import mko_data_cleaner.core.utils as utils
-from mko_data_cleaner.core.models import DataSettings, LoggingSettings, ActionType, MappingColumns
+from mko_data_cleaner.core.models import DataSettings, LoggingSettings, MappingColumns
 from mko_data_cleaner.core.paths import APP_PATHS, AppPaths, PathResolver
 from mko_data_cleaner.core.csv_service import CSVWorker
 from mko_data_cleaner.core.db_service import DBWorker
@@ -100,11 +100,14 @@ class AppService:
         )
 
         # DB settings
+        date_column = self.app_config.data_file_settings.date_column
+        date_column = csv_worker.check_date_column(date_column)
+
         db_worker = DBWorker(
             db_file=self.db_path,
             tbl_name=self.app_config.database_settings.table_name,
             index_column=self.app_config.data_file_settings.index_column,
-            date_column=self.app_config.data_file_settings.date_column
+            date_column=date_column
         )
 
         # source columns and columns from dictionary
@@ -137,10 +140,6 @@ class AppService:
 
         db_worker.update_index_from_data()
 
-        # print(mapping_dict.get_data_mapping_by_action(ActionType.DELETE))
-        # df = mapping_dict.get_data_mapping_by_action(ActionType.REPLACE, ActionType.ADD)
-
-
         # importing full dictionary to db and
         # creating mapping table with indexes
         mapping_dict.data.select(
@@ -172,17 +171,29 @@ class AppService:
             db_worker.apply_mapping(
                 mapping_table="mapping_table",
                 action_type=action,
-                extra_cols = rules_columns,
+                extra_cols=rules_columns,
                 separator=','
             )
 
         # # functionality to check if some rows are still empty after cleaning
         # # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
         #
-        # csv_worker.export_sql_to_csv(
-        #     db_con=db_worker.db_con,
-        #     data_table=db_worker.data_tbl_name
-        # )
+
+        db_worker.build_non_mapped()
+
+        csv_worker.export_sql_to_csv(
+            db_con=db_worker.db_con,
+            file_prefix='null_data',
+            export_path=f'{self.base_path}',
+            data_table=db_worker.non_mapped_table
+        )
+
+        db_worker.sync_with_data_table()
+
+        csv_worker.export_sql_to_csv(
+            db_con=db_worker.db_con,
+            data_table=db_worker.data_tbl_name
+        )
 
         end_time = datetime.now().replace(microsecond=0)
         print(

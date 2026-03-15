@@ -2,7 +2,7 @@ import traceback
 import logging
 import sqlite3
 from functools import cached_property
-from idlelib.autocomplete import TRY_A
+
 from typing import (Any, List, Optional)
 
 from .errors import WrongDataSettings
@@ -60,6 +60,7 @@ class DBWorker:
         self._data_tbl_columns = None
         self._search_columns = None
         self._extra_columns = None
+        self.non_mapped_table = 'non_mapped'
         self._full_matches_table: str = 'full_matches_table'
         self._joined_matches_table: str = 'joined_matches_table'
         self._init_base()
@@ -334,15 +335,16 @@ class DBWorker:
             index_tbl_column_names = list((
                 *self.search_columns,
                 *self.extra_columns,
-                self.index_column,
-                self.date_column
+                self.index_column
             ))
+            if self.date_column:
+                index_tbl_column_names.append(self.date_column)
             # create index base
-            self.create_table(self._index_tbl_name, *index_tbl_column_names)
+            self.create_table(self._index_tbl_name, *index_tbl_column_names, temporary=True)
 
     def _create_index(self, table_name: str, *columns: str, unique_index: bool = False):
         unique = "UNIQUE" if unique_index else ""
-        sql =f"""
+        sql = f"""
             CREATE {unique} INDEX IF NOT EXISTS {table_name}_{'_'.join(columns)}_index
             ON {table_name}({', '.join(columns)});
             """
@@ -396,29 +398,18 @@ class DBWorker:
         cursor.close()
         return names
 
-    def select_nulls(self,
-                     data_table: str,
-                     search_columns: list,
-                     clean_columns: list,
-                     ) -> List[sqlite3.Row] | None:
+    def build_non_mapped(self) -> List[sqlite3.Row] | None:
         """
         Get rows with NULL values for defined columns
-        :param data_table:
-        :param search_columns:
-        :param clean_columns:
-        :return: list, list of results
         """
-        try:
-            query = '''SELECT DISTINCT {search_columns} FROM {table} 
-                        WHERE {clean_columns} IS NULL                    
-                    '''.format(table=data_table,
-                               search_columns=", ".join(search_columns),
-                               clean_columns=" | ".join(clean_columns))
-            items = self.db_con.cursor().execute(query).fetchall()
-            self.db_con.cursor().close()
-            return items
-        except sqlite3.Error:
-            logging.error(traceback.format_exc())
+        select_cols = ', '.join(self.search_columns + self.extra_columns)
+        query = f'''
+            CREATE TEMP TABLE {self.non_mapped_table} AS 
+                SELECT DISTINCT {select_cols} 
+                FROM {self.target_table} 
+                WHERE   {' | '.join(self.extra_columns)} IS NULL                
+            '''
+        self.perform_query(query)
 
     def apply_mapping(
             self,
@@ -445,13 +436,14 @@ class DBWorker:
             case _:
                 pass
 
-        # if self._index_tbl_name:
-        #     self._sync_tables(
-        #         self.data_tbl_name,
-        #         self._index_tbl_name,
-        #         self.index_column,
-        #         *self.extra_columns
-        #     )
+    def sync_with_data_table(self):
+        if self._index_tbl_name:
+            self._sync_tables(
+                self.data_tbl_name,
+                self._index_tbl_name,
+                self.index_column,
+                *self.extra_columns
+            )
 
     def _sync_tables(
             self,
@@ -501,7 +493,7 @@ class DBWorker:
         self.perform_query(delete_sql)
         logger.info(f"Sync {target_tbl} with {source_tbl} on {index_col}")
 
-    def _build_joined_matches(self, mapping_table, temporary: bool = False):
+    def _build_joined_matches(self, mapping_table, temporary: bool = True):
 
         self.perform_query(f"DROP TABLE IF EXISTS {self._joined_matches_table}")
 
@@ -658,7 +650,7 @@ class DBWorker:
         # получаем реально используемые колонки
         cols_query = """
                      SELECT DISTINCT column_name
-                     FROM data_table_tags 
+                     FROM data_table_tags \
                      """
         used_columns = self.perform_query(cols_query).fetchall()
         used_columns = [row[0] for row in used_columns]
@@ -714,7 +706,7 @@ class DBWorker:
         self.drop_table(matches_table)
 
         sql = f"""
-         CREATE TABLE {matches_table} AS
+         CREATE TEMP TABLE {matches_table} AS
          {rule_match_query}
          """
         self.perform_query(sql)
@@ -726,7 +718,7 @@ class DBWorker:
     def _ensure_tags_table(self):
         self.create_table(
             'data_table_tags',
-            'rowid','column_name','value',
+            'rowid', 'column_name', 'value',
             temporary=True
         )
 
@@ -740,7 +732,6 @@ class DBWorker:
             'rowid', 'column_name'
         )
 
-
     def delete_base_file(self):
         try:
             self.db_file.unlink()
@@ -751,7 +742,7 @@ class DBWorker:
             logger.info(f'Data base was purified successfully')
 
     def __del__(self):
-        # self.drop_triggers(tbl_name=data_table),
-        # self.drop_tables(data_table, data_table + search_suffix)
+        self.drop_triggers(tbl_name=self.data_tbl_name),
+        self.drop_tables(self.data_tbl_name, self.target_table)
         self.db_con.close()
-        # self.delete_base_file()
+        self.delete_base_file()

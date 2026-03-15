@@ -8,7 +8,7 @@ from pydantic import (
     Field,
     NonNegativeInt,
     StringConstraints,
-    BeforeValidator, model_validator
+    BeforeValidator
 )
 
 
