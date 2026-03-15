@@ -5,6 +5,8 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, Literal
 
+from unidecode import unidecode
+
 from mko_data_cleaner.core.errors import WrongDataSettings
 from mko_data_cleaner.core.models import ActionType, MatchType
 import yaml
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # pattern used to check validity of column and table name before adding them
 ALLOWED_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
-RESTRICTED_PATTERN = r'[#@$%&~*+=<>^`|(){}?!;:,.-\/"]'
+
 
 
 def parse_action(value: str) -> ActionType | None:
@@ -65,8 +67,12 @@ def validate_names(*names: str) -> None:
             f"Invalid names: {', '.join(invalid)}"
         )
 
-def make_valid(name: str, pattern: str = RESTRICTED_PATTERN) -> str:
-    return sub(pattern, '_', name)
+def make_valid(name: str) -> str:
+    # 1. translate
+    name = unidecode(name)
+    # 2. clean
+    name = sub(r'[^a-zA-Z0-9_]', '', name)
+    return name
 
 
 def clean_names(*names: str) -> list[str]:

@@ -272,10 +272,11 @@ class CSVWorker:
             cursor = db_con.cursor()
             cursor.execute(f"SELECT * FROM {data_table}")
             columns = [col[0] for col in cursor.description]
+            schema_overrides = {col: pl.Utf8 for col in columns}  # force to str
             rows = cursor.fetchmany(max_rows)
 
             while rows:
-                df = pl.DataFrame(rows, schema=columns)
+                df = pl.DataFrame(rows, schema=columns, orient="row", schema_overrides = schema_overrides)
                 row_counter += df.height
 
                 file = Path(

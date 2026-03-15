@@ -11,7 +11,7 @@
     'date_column': 'researchDate' #'researchDate' researchMonth
   },
   'dict_file_settings': {
-    'extension': 'csv',
+    'extension': 'gz',
     'col_indexes': { # columns' indexes in the file_search containing settings
       'action': 0,  # update or delete setting
       'match': 1,

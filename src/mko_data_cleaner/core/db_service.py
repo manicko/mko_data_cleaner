@@ -2,9 +2,12 @@ import traceback
 import logging
 import sqlite3
 from functools import cached_property
+from idlelib.autocomplete import TRY_A
 from typing import (Any, List, Optional)
 
 from .errors import WrongDataSettings
+from .models import ActionType, MappingColumns
+
 from .utils import clean_names, validate_names, make_valid
 from pathlib import Path
 
@@ -39,11 +42,17 @@ class DBWorker:
         "search_columns",
         "extra_columns",
     )
+    AVAILABLE_ACTIONS = {
+        "DELETE": "d",
+        "REPLACE": "r",
+        "ADD": "a",
+    }
 
     def __init__(self, db_file: Path, tbl_name: str = 'data_table', index_column: str | None = None,
                  date_column: str | None = None):
         self.db_file = db_file
         self.db_con = sqlite3.connect(self.db_file)
+        self.uri = f"sqlite:///{self.db_file.absolute()}"
         self.data_tbl_name = make_valid(tbl_name)
         self.index_column = make_valid(index_column) if index_column else None
         self.date_column = make_valid(date_column) if date_column else None
@@ -51,7 +60,15 @@ class DBWorker:
         self._data_tbl_columns = None
         self._search_columns = None
         self._extra_columns = None
+        self._full_matches_table: str = 'full_matches_table'
+        self._joined_matches_table: str = 'joined_matches_table'
         self._init_base()
+
+    @property
+    def target_table(self):
+        if self._index_tbl_name:
+            return self._index_tbl_name
+        return self.data_tbl_name
 
     def _init_base(self):
         self.db_con.cursor().execute("PRAGMA journal_mode = WAL")
@@ -94,18 +111,22 @@ class DBWorker:
     def get_col_names(self, index) -> str | None:
         return self.column_index.get(index, None)
 
-    def create_table(self, tbl_name: str, *tbl_columns: str) -> None:
+    def create_table(self, tbl_name: str, *tbl_columns: str, temporary: bool = False) -> None:
         """ Creates datatable in the database using 'tbl_name' and 'tbl_columns'
         :param tbl_name: name of a table to create
         :param tbl_columns: str, list of column names
+        :param temporary: bool - if true, will create temporary table
         :return:
         """
+        temp = 'TEMP' if temporary else ''
         tbl_name, *tbl_columns = clean_names(tbl_name, *tbl_columns)
-        query = f"CREATE TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
-        self.perform_query(query)
-        print(f'Table \'{tbl_name}\' created successfully')
 
-    def update_distinct_table(self):
+        query = f"CREATE {temp} TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
+
+        self.perform_query(query)
+        logger.info(f'Table \'{tbl_name}\' created successfully')
+
+    def update_index_from_data(self):
         if self.index_column:
             insert_columns = select_columns = f"{', '.join(self.search_columns)}, {self.index_column}"
             if self.date_column:
@@ -119,22 +140,13 @@ class DBWorker:
             self.perform_query(query)
             logger.info(f'Table \'{self._index_tbl_name}\' updated successfully')
 
-    def update_values(self, target_tbl_name, from_tbl_name, index_col, *tbl_columns: str):
-        query_col = [f'{name}={from_tbl_name}.{name}' for name in tbl_columns if name != index_col]
-        query = (f"UPDATE {target_tbl_name} "
-                 f"SET  {', '.join(query_col)}  "
-                 f"FROM {from_tbl_name} "
-                 f"WHERE {target_tbl_name}.{index_col} = {from_tbl_name}.{index_col};")
-        self.perform_query(query)
-        logger.info(f'Table \'{target_tbl_name}\' updated successfully')
-
     def perform_query(self, query: str, *term: tuple[str]):
         try:
             q = self.db_con.cursor().execute(query, term)
             self.db_con.cursor().close()
             self.db_con.commit()
         except sqlite3.Error as err:
-            logging.error(traceback.format_exc())
+            logging.error(f"SQL Error {err}, Query = ' {query} ', Terms =' {term} ' {traceback.format_exc()}")
             raise err
         else:
             return q
@@ -147,6 +159,7 @@ class DBWorker:
         """
         query = f"DROP TABLE IF EXISTS {table_name}"
         try:
+            self.db_con.cursor().close()
             if self.perform_query(query):
                 logger.info(f"Table '{table_name}' was successfully dropped")
                 return True
@@ -327,18 +340,21 @@ class DBWorker:
             # create index base
             self.create_table(self._index_tbl_name, *index_tbl_column_names)
 
+    def _create_index(self, table_name: str, *columns: str, unique_index: bool = False):
+        unique = "UNIQUE" if unique_index else ""
+        sql =f"""
+            CREATE {unique} INDEX IF NOT EXISTS {table_name}_{'_'.join(columns)}_index
+            ON {table_name}({', '.join(columns)});
+            """
+        self.perform_query(sql)
+
     def create_table_with_index(self):
         self._validate_required()
         # create empty datatable
         self.create_table(self.data_tbl_name, *self.data_tbl_columns)
         self._create_index_table()
-
-    def clean_update_data(self, params):
-        # update clean columns in the data table
-        if self.index_column:
-            logger.info(f"Updating clean columns in the data table")
-            self.update_values(self.data_tbl_name, self._index_tbl_name,
-                               self.index_column, *self.extra_columns)
+        self._create_index(self.data_tbl_name, self.index_column)
+        self._create_index(self._index_tbl_name, self.index_column)
 
     def data_chunk_to_sql(self,
                           chunk,
@@ -404,102 +420,216 @@ class DBWorker:
         except sqlite3.Error:
             logging.error(traceback.format_exc())
 
-    @staticmethod
-    def _get_action_registry():
-        return {
-            "DELETE": "d",
-            "REPLACE": "r",
-            "ADD": "a",
-        }
-
     def apply_mapping(
             self,
-            mapping_table,
-            column_name_col="column_name",
-            pattern_col="pattern",
-            separator=", ",
+            mapping_table: str,
+            action_type: str,
+            extra_cols: list,
+            separator=", "
     ):
         """
         Apply mapping rules in order:
         DELETE → REPLACE → ADD
         """
 
-        actions = self._get_action_registry()
+        self._build_joined_matches(mapping_table)
 
-        target_table = self._get_target_table()
+        match action_type:
+            case ActionType.DELETE:
+                self._apply_delete()
+            case ActionType.REPLACE:
+                self._apply_replace(extra_cols)
+            case ActionType.ADD:
+                self._ensure_tags_table()
+                self._apply_add(separator)
+            case _:
+                pass
 
-        self._ensure_rules_index(mapping_table, column_name_col)
+        # if self._index_tbl_name:
+        #     self._sync_tables(
+        #         self.data_tbl_name,
+        #         self._index_tbl_name,
+        #         self.index_column,
+        #         *self.extra_columns
+        #     )
 
-        self._build_rule_matches(
-            target_table,
-            mapping_table,
-            column_name_col,
-            pattern_col,
+    def _sync_tables(
+            self,
+            target_tbl,
+            source_tbl,
+            index_col,
+            *cols
+    ):
+
+        cols_update = ", ".join(
+            f"{c}=s.{c}" for c in cols if c != index_col
         )
 
-        self._apply_delete(target_table, actions["DELETE"])
+        update_sql = f"""
+        UPDATE {target_tbl} AS t
+        SET {cols_update}
+        FROM {source_tbl} AS s
+        WHERE t.{index_col} = s.{index_col};
+        """
 
-        self._build_rules_joined(
-            mapping_table,
-            actions["REPLACE"],
-            actions["ADD"],
-        )
+        self.perform_query(update_sql)
 
-        self._apply_replace(target_table, actions["REPLACE"])
+        insert_cols = ", ".join(cols)
 
-        self._ensure_tags_table()
+        insert_sql = f"""
+        INSERT INTO {target_tbl} ({insert_cols})
+        SELECT {insert_cols}
+        FROM {source_tbl} AS s
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM {target_tbl} AS t
+            WHERE t.{index_col}=s.{index_col}
+        );
+        """
 
-        self._apply_add(target_table, actions["ADD"], separator)
+        self.perform_query(insert_sql)
 
-    def _apply_delete(self, target_table, action_code):
+        delete_sql = f"""
+        DELETE FROM {target_tbl} AS t
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM {source_tbl} AS s
+            WHERE s.{index_col}=t.{index_col}
+        );
+        """
+
+        self.perform_query(delete_sql)
+        logger.info(f"Sync {target_tbl} with {source_tbl} on {index_col}")
+
+    def _build_joined_matches(self, mapping_table, temporary: bool = False):
+
+        self.perform_query(f"DROP TABLE IF EXISTS {self._joined_matches_table}")
+
+        tmp = 'TEMP' if temporary else ""
         sql = f"""
-        DELETE FROM {target_table}
-        WHERE rowid IN (
-            SELECT DISTINCT data_rowid
-            FROM temp_rule_matches
-            WHERE action = '{action_code}'
-        )
+        CREATE {tmp} TABLE {self._joined_matches_table} AS 
+        SELECT
+            rm.data_rowid,
+            r.*
+        FROM {self._full_matches_table} rm
+        JOIN {mapping_table} r
+            ON r.{MappingColumns.mapping_index} = rm.{MappingColumns.mapping_index}        
         """
 
         self.perform_query(sql)
 
-    def _apply_replace(self, target_table, action_code):
+    def _apply_delete(self) -> None:
 
-        agg_cols = ",\n".join(
-            f"""
-            MAX(CASE
-                WHEN r.{col} IS NOT NULL
-                THEN r.{col}
-            END) AS {col}
+        sql = f"""
+            DELETE FROM {self.target_table}
+            WHERE rowid IN (
+                SELECT DISTINCT data_rowid
+                FROM {self._joined_matches_table} 
+                )                            
             """
-            for col in self.extra_columns
-        )
-
-        update_clause = ",\n".join(
-            f"{col} = COALESCE(rule_values.{col}, {target_table}.{col})"
-            for col in self.extra_columns
-        )
-
-        sql = f"""
-        WITH rule_values AS (
-            SELECT
-                data_rowid,
-                {agg_cols}
-            FROM temp_rules_joined r
-            WHERE r.action = '{action_code}'
-            GROUP BY data_rowid
-        )
-
-        UPDATE {target_table}
-        SET
-            {update_clause}
-        FROM rule_values
-        WHERE {target_table}.rowid = rule_values.data_rowid
-        """
 
         self.perform_query(sql)
 
-    def _apply_add(self, target_table, action_code, separator):
+        logger.info(f"Apply delete rules to {self.target_table}")
+        self.perform_query(sql)
+
+    def _apply_replace(self, column_names: list):
+
+        extra_cols = set(self.extra_columns) & set(column_names)
+        update_clause = ",\n".join(f"{col} = jm.{col}" for col in extra_cols)
+        #
+        # sql =f"""
+        #         UPDATE data_table_distinct
+        #         SET
+        #             {update_clause}
+        #         FROM {self._joined_matches_table} jm
+        #         WHERE {self.target_table}.rowid = jm.data_rowid
+        #               AND jm.rowid = (
+        #                 SELECT rowid
+        #                 FROM {self._joined_matches_table} jm2
+        #                 WHERE jm2.data_rowid = jm.data_rowid
+        #                 ORDER BY jm2.{MappingColumns.mapping_index} DESC
+        #                 LIMIT 1
+        #             );
+        #
+        #         """
+        sql = f"""
+                    UPDATE {self.target_table}
+                    SET {update_clause}                    
+                    FROM {self._joined_matches_table} jm
+                    JOIN (
+                        SELECT
+                            data_rowid,
+                            MAX ({MappingColumns.mapping_index}) AS max_idx
+                        FROM {self._joined_matches_table}
+                        GROUP BY data_rowid
+                    ) mx
+                    ON mx.data_rowid = jm.data_rowid
+                    AND mx.max_idx = jm.{MappingColumns.mapping_index}
+                    WHERE data_table_distinct.rowid = jm.data_rowid;
+            """
+
+        # select_cols = ",\n".join(f"{col}" for col in extra_cols)
+        # update_clause = ",\n".join(f"{col} = rr.{col}" for col in extra_cols)
+        #
+        # sql = f"""
+        #         WITH ranked_rules AS (
+        #             SELECT
+        #                 data_rowid,
+        #                 {select_cols},
+        #                 ROW_NUMBER() OVER(
+        #                     PARTITION BY data_rowid
+        #                     ORDER BY {MappingColumns.mapping_index} DESC
+        #                 ) AS rn
+        #             FROM {self._joined_matches_table}
+        #         )
+        #         UPDATE {self.target_table}
+        #         SET
+        #             {update_clause}
+        #         FROM ranked_rules rr
+        #         WHERE rr.rn = 1
+        #         AND {self.target_table}.rowid = rr.data_rowid
+        #         """
+
+        # select_cols = ",\n".join(f"{col}" for col in extra_cols)
+
+        # update_clause = ",\n".join(
+        #     f"{col} = rule_values.{col}"
+        #     for col in extra_cols
+        # )
+        # sql = f"""
+        # WITH ranked_rules AS (
+        #     SELECT
+        #         r.data_rowid,
+        #         {select_cols},
+        #         ROW_NUMBER() OVER(
+        #             PARTITION BY r.data_rowid
+        #             ORDER BY r.{MappingColumns.mapping_index} DESC
+        #         ) AS rn
+        #     FROM {self._joined_matches_table} r
+        # ),
+        #
+        # rule_values AS (
+        #     SELECT
+        #         data_rowid,
+        #         {select_cols}
+        #     FROM ranked_rules
+        #     WHERE rn = 1
+        # )
+        #
+        # UPDATE {target_table}
+        # SET
+        #     {update_clause}
+        # FROM rule_values
+        # WHERE {target_table}.rowid = rule_values.data_rowid
+        # """
+
+        logger.info(f"Apply replace rules to {self.target_table}")
+        self.perform_query(sql)
+
+    def _apply_add(self, separator=', '):
+
+        logger.info(f"Apply add rules to {self.target_table}")
 
         tag_unions = []
 
@@ -507,84 +637,71 @@ class DBWorker:
             tag_unions.append(
                 f"""
                 SELECT
-                    rj.data_rowid AS rowid,
+                    rm.data_rowid AS rowid,
                     '{col}' AS column_name,
-                    rj.{col} AS value
-                FROM temp_rules_joined rj
-                WHERE rj.action = '{action_code}'
-                AND rj.{col} IS NOT NULL
-                AND rj.{col} != ''
+                    rm.{col} AS value
+                FROM {self._joined_matches_table} rm
+                WHERE rm.{col} IS NOT NULL
+                AND rm.{col} != ''
                 """
             )
 
         tag_expand_query = "\nUNION ALL\n".join(tag_unions)
 
-        sql = f"""
+        insert_sql = f"""
         INSERT OR IGNORE INTO data_table_tags(rowid, column_name, value)
         {tag_expand_query}
         """
 
-        self.perform_query(sql)
+        self.perform_query(insert_sql)
 
-        update_clauses = []
+        # получаем реально используемые колонки
+        cols_query = """
+                     SELECT DISTINCT column_name
+                     FROM data_table_tags 
+                     """
+        used_columns = self.perform_query(cols_query).fetchall()
+        used_columns = [row[0] for row in used_columns]
 
-        for col in self.extra_columns:
-            update_clauses.append(
-                f"""
-                {col} = (
-                    SELECT GROUP_CONCAT(value, '{separator}')
-                    FROM (
-                        SELECT DISTINCT value
-                        FROM data_table_tags
-                        WHERE rowid = {target_table}.rowid
-                        AND column_name = '{col}'
-                        ORDER BY value
-                    )
+        # обновляем только эти колонки
+        for col in used_columns:
+            update_sql = f"""
+            UPDATE {self.target_table}
+            SET {col} = (
+                SELECT GROUP_CONCAT(value, '{separator}')
+                FROM (
+                    SELECT DISTINCT value
+                    FROM data_table_tags
+                    WHERE rowid = {self.target_table}.rowid
+                    AND column_name = '{col}'
+                    ORDER BY value
                 )
-                """
             )
+            WHERE rowid IN (
+                SELECT rowid
+                FROM data_table_tags
+                WHERE column_name = '{col}'
+            )
+            """
 
-        update_clause = ",\n".join(update_clauses)
+            self.perform_query(update_sql)
 
-        sql = f"""
-        UPDATE {target_table}
-        SET {update_clause}
-        WHERE rowid IN (
-            SELECT DISTINCT rowid FROM data_table_tags
-        )
-        """
+    def create_rules_matches(self, mapping_table: str):
 
-        self.perform_query(sql)
-
-    def _get_target_table(self):
-        if self._index_tbl_name:
-            return self._index_tbl_name
-        return self.data_tbl_name
-
-    def _ensure_rules_index(self, mapping_table, column_name_col):
-        sql = f"""
-        CREATE INDEX IF NOT EXISTS idx_rules_column
-        ON {mapping_table}({column_name_col});
-        """
-        self.perform_query(sql)
-
-    def _build_rule_matches(
-            self,
-            target_table,
-            mapping_table,
-            column_name_col,
-            pattern_col,
-    ):
+        column_name_col = MappingColumns.column_name
+        pattern_col = MappingColumns.pattern
+        index_col = MappingColumns.mapping_index
+        matches_table = self._full_matches_table
 
         union_queries = []
+
         for col in self.search_columns:
             union_queries.append(
                 f"""
-                SELECT
+                SELECT DISTINCT 
                     data.rowid AS data_rowid,
-                    rules.rowid AS rule_rowid,
-                    rules.action AS action
-                FROM {target_table} AS data
+                    rules.{index_col}                                       
+                FROM {self.target_table} AS data
                 JOIN {mapping_table} AS rules
                 ON rules.{column_name_col} = '{col}'
                 AND rules.{pattern_col} IS NOT NULL
@@ -594,67 +711,35 @@ class DBWorker:
 
         rule_match_query = "\nUNION ALL\n".join(union_queries)
 
-        self.perform_query("DROP TABLE IF EXISTS temp_rule_matches")
+        self.drop_table(matches_table)
 
         sql = f"""
-        CREATE TEMP TABLE temp_rule_matches AS
-        {rule_match_query}
-        """
+         CREATE TABLE {matches_table} AS
+         {rule_match_query}
+         """
         self.perform_query(sql)
 
-        self.perform_query(
-            """
-            CREATE INDEX temp_rule_matches_idx
-                ON temp_rule_matches (data_rowid)
-            """
-        )
-
-    def _build_rules_joined(self, mapping_table, replace_code, add_code):
-
-        self.perform_query("DROP TABLE IF EXISTS temp_rules_joined")
-
-        sql = f"""
-        CREATE TEMP TABLE temp_rules_joined AS
-        SELECT
-            rm.data_rowid,
-            r.*
-        FROM temp_rule_matches rm
-        JOIN {mapping_table} r
-        ON r.rowid = rm.rule_rowid
-        WHERE rm.action IN ('{replace_code}', '{add_code}')
-        """
-
-        self.perform_query(sql)
+        self._create_index(matches_table, 'data_rowid')
+        self._create_index(matches_table, index_col)
+        self.drop_table(mapping_table)
 
     def _ensure_tags_table(self):
-
-        self.perform_query(
-            """
-            CREATE TABLE IF NOT EXISTS data_table_tags
-            (
-                rowid
-                INTEGER,
-                column_name
-                TEXT,
-                value
-                TEXT
-            )
-            """
+        self.create_table(
+            'data_table_tags',
+            'rowid','column_name','value',
+            temporary=True
         )
 
-        self.perform_query(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tag
-                ON data_table_tags(rowid, column_name, value)
-            """
+        self._create_index(
+            'data_table_tags',
+            'rowid', 'column_name', 'value',
+            unique_index=True
+        )
+        self._create_index(
+            'data_table_tags',
+            'rowid', 'column_name'
         )
 
-        self.perform_query(
-            """
-            CREATE INDEX IF NOT EXISTS idx_tags_row_col
-                ON data_table_tags(rowid, column_name)
-            """
-        )
 
     def delete_base_file(self):
         try:

@@ -46,6 +46,21 @@ class MatchType(StrEnum):
     STARTS_WITH = 's'
 
 
+class MappingColumns(StrEnum):
+    # renamed from source
+    action = 'action'
+    match = 'match'
+    search = "search"
+    term = "term"
+
+    # generated
+    mapping_index = 'mapping_index'
+    column_name = 'column_name' # name based on search column with index
+    pattern = 'pattern'
+
+
+
+
 class DictColumnsIndexes(BaseModel):
     model_config = ConfigDict(extra="allow")
     action: NonNegativeInt = Field(default=0)  # replace, add or delete setting
@@ -101,8 +116,8 @@ class DataFileExtension(StrEnum):
 class DataFile(BaseModel):
     model_config = ConfigDict(extra="allow")
     extension: DataFileExtension
-    index_column: str =  None
-    date_column: str = None #'researchDate' researchMonth
+    index_column: str = None
+    date_column: str = None  # 'researchDate' researchMonth
 
 
 class PolarsWriteCSV(BaseModel):

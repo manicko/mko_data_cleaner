@@ -3,7 +3,7 @@ from datetime import datetime
 from functools import cached_property
 from mko_data_cleaner.core.errors import ConfigError, DataValidationError
 import mko_data_cleaner.core.utils as utils
-from mko_data_cleaner.core.models import DataSettings, LoggingSettings, ActionType
+from mko_data_cleaner.core.models import DataSettings, LoggingSettings, ActionType, MappingColumns
 from mko_data_cleaner.core.paths import APP_PATHS, AppPaths, PathResolver
 from mko_data_cleaner.core.csv_service import CSVWorker
 from mko_data_cleaner.core.db_service import DBWorker
@@ -135,37 +135,53 @@ class AppService:
 
         logger.info(f"{rows_count:,} rows were loaded to data table")
 
-        db_worker.update_distinct_table()
+        db_worker.update_index_from_data()
 
         # print(mapping_dict.get_data_mapping_by_action(ActionType.DELETE))
-        # print(mapping_dict.get_data_mapping_by_action(ActionType.ADD))
-        # print(mapping_dict.get_data_mapping_by_action(ActionType.REPLACE))
-
-        # apply replace rules
-        replace_df = mapping_dict.get_data_mapping_by_action(ActionType.REPLACE)
+        # df = mapping_dict.get_data_mapping_by_action(ActionType.REPLACE, ActionType.ADD)
 
 
-        csv_worker.data_chunk_to_sql(
-                mapping_dict.data,
-                'mapping_table',
-                db_worker.db_con
+        # importing full dictionary to db and
+        # creating mapping table with indexes
+        mapping_dict.data.select(
+            [
+                MappingColumns.mapping_index,
+                MappingColumns.column_name,
+                MappingColumns.pattern
+            ]
+        ).write_database(
+            table_name="temp_tbl",
+            connection=db_worker.uri,
+            if_table_exists="replace",
+            engine="sqlalchemy",
+        )
+
+        db_worker.create_rules_matches(
+            mapping_table="temp_tbl"
+        )
+
+        for action, data in mapping_dict.generate_rules_blocks():
+            data.write_database(
+                table_name="mapping_table",
+                connection=db_worker.uri,
+                if_table_exists="replace",
+                engine="sqlalchemy",
+            )
+            rules_columns = data.columns.copy()
+            # search_columns = data[MappingColumns.column_name].unique().to_list()
+            db_worker.apply_mapping(
+                mapping_table="mapping_table",
+                action_type=action,
+                extra_cols = rules_columns,
+                separator=','
             )
 
-        db_worker.apply_mapping('mapping_table')
-
-        # # # looping through search\update params and fill in data
-        # for action,match_type, term, col in mapping_dict.get_action_params():
-        #     print(params)
-
-        # for col_name, param in params:
-        #     db_worker.search_update_query(table_name, col_name, *param)
-        #
         # # functionality to check if some rows are still empty after cleaning
         # # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
         #
         # csv_worker.export_sql_to_csv(
         #     db_con=db_worker.db_con,
-        #     data_table=table_name
+        #     data_table=db_worker.data_tbl_name
         # )
 
         end_time = datetime.now().replace(microsecond=0)
@@ -181,4 +197,4 @@ app_service = AppService(app_paths=APP_PATHS, resolver=PathResolver(APP_PATHS.us
 logging.config.dictConfig(app_service.log_config.model_dump())
 
 if __name__ == "__main__":
-    app_service.run_report(r'data\snacks')
+    app_service.run_report(r'data\tefal')
