@@ -12,6 +12,8 @@ from mko_data_cleaner.core.dict_service import MappingDict
 import logging
 import logging.config
 
+from mko_data_cleaner.core.utils import progress_bar
+
 logger = logging.getLogger("app_service")
 
 
@@ -103,97 +105,104 @@ class AppService:
         date_column = self.app_config.data_file_settings.date_column
         date_column = csv_worker.check_date_column(date_column)
 
-        db_worker = DBWorker(
+        with DBWorker(
             db_file=self.db_path,
             tbl_name=self.app_config.database_settings.table_name,
             index_column=self.app_config.data_file_settings.index_column,
             date_column=date_column
-        )
+        ) as db_worker:
 
-        # source columns and columns from dictionary
-        db_worker.set_data_tbl_columns(
-            *csv_worker.source_headers,
-            extra_cols=mapping_dict.extra_col_names
-        )
-
-        mapping_dict.build_mapping(
-            *db_worker.data_tbl_columns,
-            extra_col_names=db_worker.extra_columns
-        )
-
-        # # create search table using indexes from dictionary
-        db_worker.search_columns = mapping_dict.get_search_columns()
-        db_worker.create_table_with_index()
-
-        # loading data to database
-        rows_count = 0
-        col_count = len(csv_worker.source_headers)
-
-        for chunk in csv_worker.get_data_chunks(db_worker.data_tbl_columns[:col_count]):
-            rows_count += csv_worker.data_chunk_to_sql(
-                chunk,
-                db_worker.data_tbl_name,
-                db_worker.db_con
+            # source columns and columns from dictionary
+            db_worker.set_data_tbl_columns(
+                *csv_worker.source_headers,
+                extra_cols=mapping_dict.extra_col_names
             )
 
-        logger.info(f"{rows_count:,} rows were loaded to data table")
+            mapping_dict.build_mapping(
+                *db_worker.data_tbl_columns,
+                extra_col_names=db_worker.extra_columns
+            )
 
-        db_worker.update_index_from_data()
+            # # create search table using indexes from dictionary
+            db_worker.search_columns = mapping_dict.get_search_columns()
+            db_worker.create_table_with_index()
 
-        # importing full dictionary to db and
-        # creating mapping table with indexes
-        mapping_dict.data.select(
-            [
-                MappingColumns.mapping_index,
-                MappingColumns.column_name,
-                MappingColumns.pattern
-            ]
-        ).write_database(
-            table_name="temp_tbl",
-            connection=db_worker.uri,
-            if_table_exists="replace",
-            engine="sqlalchemy",
-        )
+            # loading data to database
+            rows_count = 0
+            col_count = len(csv_worker.source_headers)
 
-        db_worker.create_rules_matches(
-            mapping_table="temp_tbl"
-        )
+            for chunk in csv_worker.get_data_chunks(db_worker.data_tbl_columns[:col_count]):
+                rows_count +=  chunk.write_database(
+                    table_name=db_worker.data_tbl_name,
+                    connection=db_worker.engine,
+                    if_table_exists='append',
+                )
+                logger.debug(f"write_database → {rows_count:,} rows")
 
-        for action, data in mapping_dict.generate_rules_blocks():
-            data.write_database(
-                table_name="mapping_table",
-                connection=db_worker.uri,
+
+            logger.info(f"{rows_count:,} rows were loaded to data table")
+
+            db_worker.update_index_from_data()
+
+            # importing full dictionary to db and
+            # creating mapping table with indexes
+            mapping_dict.data.select(
+                [
+                    MappingColumns.mapping_index,
+                    MappingColumns.column_name,
+                    MappingColumns.pattern
+                ]
+            ).write_database(
+                table_name="temp_tbl",
+                connection=db_worker.engine,
                 if_table_exists="replace",
-                engine="sqlalchemy",
-            )
-            rules_columns = data.columns.copy()
-            # search_columns = data[MappingColumns.column_name].unique().to_list()
-            db_worker.apply_mapping(
-                mapping_table="mapping_table",
-                action_type=action,
-                extra_cols=rules_columns,
-                separator=','
+
             )
 
-        # # functionality to check if some rows are still empty after cleaning
-        # # get_n = select_nulls(DB_CONNECTION, table_name, search_cols, clean_cols)
-        #
+            db_worker.create_rules_matches(
+                mapping_table="temp_tbl"
+            )
 
-        db_worker.build_non_mapped()
+            rules_count_total = mapping_dict.data.height
+            rules_count = 0
 
-        csv_worker.export_sql_to_csv(
-            db_con=db_worker.db_con,
-            file_prefix='null_data',
-            export_path=f'{self.base_path}',
-            data_table=db_worker.non_mapped_table
-        )
+            for action, data in mapping_dict.generate_rules_blocks():
 
-        db_worker.sync_with_data_table()
+                rules_count += data.height
+                progress_bar(message='Applying rules', current=rules_count, total=rules_count_total)
 
-        csv_worker.export_sql_to_csv(
-            db_con=db_worker.db_con,
-            data_table=db_worker.data_tbl_name
-        )
+                data.write_database(
+                    table_name="mapping_table",
+                    connection=db_worker.engine,
+                    if_table_exists="replace",
+                )
+                rules_columns = data.columns.copy()
+
+                db_worker.apply_mapping(
+                    mapping_table="mapping_table",
+                    action_type=action,
+                    extra_cols=rules_columns,
+                    separator=','
+                )
+
+            # checking non mapped data
+            db_worker.build_non_mapped()
+
+            csv_worker.export_sql_to_csv(
+                db_con=db_worker.db_con,
+                file_prefix='null_data',
+                export_path=f'{self.base_path}',
+                data_table=db_worker.non_mapped_table
+            )
+
+            # synchronizing and exporting
+            db_worker.sync_with_data_table()
+
+            csv_worker.export_sql_to_csv(
+                db_con=db_worker.db_con,
+                data_table=db_worker.data_tbl_name,
+                export_path=self.export_path
+            )
 
         end_time = datetime.now().replace(microsecond=0)
         print(
@@ -201,7 +210,6 @@ class AppService:
             f'Общее время: {end_time - start_time} {'-' * 10}\n',
             flush=True,
         )
-
 
 app_service = AppService(app_paths=APP_PATHS, resolver=PathResolver(APP_PATHS.user_dir))
 

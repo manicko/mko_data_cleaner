@@ -5,11 +5,10 @@ from pathlib import Path
 from typing import Generator, Optional, Literal
 from time import strftime
 
-
 import polars as pl
 import sqlite3
 
-from .utils import get_dir_content
+from .utils import get_dir_content, progress_bar
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +27,7 @@ class CSVWorker:
     CHUNK_SIZE = 10000
     DATE_REGEX = r"^\d{4}[-/.]\d{2}[-/.]\d{2}$"
     DATE_SAMPLE_SIZE = 500
+
     def __init__(
             self,
             data_path: str | os.PathLike,
@@ -45,12 +45,12 @@ class CSVWorker:
         self.dict_settings = dict_settings
         self.export_path = Path(export_path)
         self.export_settings = export_settings
-
-        self.data_files = get_dir_content(
-            data_path,
+        self.data_path = Path(data_path)
+        self.data_files = list(get_dir_content(
+            self.data_path,
             ext=self.data_settings.get("extension", "csv"),
-        )
-        self.sample_data_file = next(self.data_files)
+        ))
+        self.sample_data_file = self.data_files[0]
         self.source_headers = self.get_csv_headers(self.sample_data_file)
 
     # ---------------------------------------------------------
@@ -168,91 +168,16 @@ class CSVWorker:
 
     def get_data_chunks(self, col_names: list[str]) -> Generator[pl.DataFrame, None, None]:
         """Yield CSV chunks from all files."""
-        file = self.sample_data_file
-        while file:
-            logger.info(f"Reading file: {file}")
+        total = len(self.data_files)
+        logger.info("Reading of %d files from folder %s",
+                    total, self.data_path)
+
+        for i, file in enumerate(self.data_files, start=1):
+            logger.debug("Reading file: %s", file)
+            progress_bar(message="Reading data", current=i, total=total)
+
             yield from self._read_csv_in_chunks(file, col_names)
-            file = next(self.data_files, False)
 
-    @staticmethod
-    def data_chunk_to_sql(
-            chunk: pl.DataFrame,
-            table_name: str,
-            db_con: sqlite3.Connection,
-            if_exists: Literal["append", "replace", "fail"] = "append",
-            use_fallback: bool = False,
-    ) -> int:
-        """
-        Write Polars DataFrame chunk into SQLite table.
-
-        Prefers Polars write_database; falls back to executemany.
-
-        Parameters
-        ----------
-        chunk : pl.DataFrame
-            Data chunk.
-        table_name : str
-            Target table.
-        db_con : sqlite3.Connection
-            Open SQLite connection.
-        if_exists : {"append","replace","fail"}
-            Table behaviour.
-        use_fallback : bool
-            Force executemany.
-
-        Returns
-        -------
-        int
-            Inserted rows.
-        """
-
-        inserted_rows = 0
-
-        if not use_fallback:
-            try:
-
-                uri = f"sqlite:///{db_con.execute('PRAGMA database_list').fetchone()[2]}"
-
-                inserted_rows = chunk.write_database(
-                    table_name=table_name,
-                    connection=uri,
-                    if_table_exists=if_exists,
-                    engine="sqlalchemy",
-                )
-
-                logger.debug(f"write_database → {inserted_rows:,} rows")
-
-                return inserted_rows
-
-            except Exception as err:
-                logger.warning(
-                    f"write_database failed ({err}). Switching to executemany."
-                )
-                use_fallback = True
-
-        if use_fallback:
-            try:
-                cursor = db_con.cursor()
-                cols = chunk.columns
-                placeholders = ",".join(["?"] * len(cols))
-                sql = f"""
-                INSERT INTO {table_name}
-                ({",".join(cols)})
-                VALUES ({placeholders})
-                """
-                cursor.executemany(
-                    sql,
-                    chunk.iter_rows()
-                )
-                inserted_rows = chunk.height
-                logger.debug(f"executemany → {inserted_rows:,} rows")
-
-            except Exception as err:
-                db_con.rollback()
-                logger.error(f"executemany failed: {err}")
-                raise
-
-        return inserted_rows
 
     # ---------------------------------------------------------
     # DICTIONARY
@@ -329,45 +254,102 @@ class CSVWorker:
             db_con: sqlite3.Connection,
             data_table: str,
             file_prefix: Optional[str] = None,
-            export_path: Optional[str] = None
+            export_path: Path | str | None = None,
     ):
         """
-        Export SQLite table to gzip CSV using Polars.
+        Export SQLite table to CSV files using Polars.
+
+        The table is exported in chunks to avoid loading the entire
+        dataset into memory. Each chunk is written into a separate
+        CSV file (optionally compressed).
+
+        Parameters
+        ----------
+        db_con : sqlite3.Connection
+            Active SQLite connection.
+        data_table : str
+            Source table name.
+        file_prefix : str, optional
+            Prefix for exported file names.
+        export_path : Path | str, optional
+            Directory for exported files.
+
+        Returns
+        -------
+        None
         """
 
-        logger.info(f"Starting export from {data_table}")
+        logger.debug(f"Starting export from {data_table}")
 
         try:
             file_prefix = file_prefix or data_table
+            export_path = Path(export_path or self.export_path)
+            export_path.mkdir(parents=True, exist_ok=True)
+
             file_name = self.get_file_name(file_prefix, "{file_index}")
+
             params = self.export_settings.copy()
             max_rows = params.pop("chunksize", 10000)
+
             file_index = 1
             row_counter = 0
-            cursor = db_con.cursor()
-            cursor.execute(f"SELECT * FROM {data_table}")
-            columns = [col[0] for col in cursor.description]
-            schema_overrides = {col: pl.Utf8 for col in columns}  # force to str
-            rows = cursor.fetchmany(max_rows)
+
+            # -----------------------------
+            # cursor for data
+            # -----------------------------
+            data_cursor = db_con.cursor()
+            data_cursor.execute(f"SELECT * FROM {data_table}")
+
+            columns = [col[0] for col in data_cursor.description]
+
+            schema_overrides = {col: pl.Utf8 for col in columns}
+
+            # -----------------------------
+            # cursor for row count
+            # -----------------------------
+            count_cursor = db_con.cursor()
+            count_cursor.execute(f"SELECT COUNT(*) FROM {data_table}")
+            total_rows = count_cursor.fetchone()[0]
+
+            if total_rows == 0:
+                logger.debug(f"Table {data_table} is empty.")
+                return
+
+            rows = data_cursor.fetchmany(max_rows)
 
             while rows:
-                df = pl.DataFrame(rows, schema=columns, orient="row", schema_overrides=schema_overrides)
-                row_counter += df.height
-
-                file: Path = Path(
-                    export_path or self.export_path,
-                    file_name.format(file_index=file_index),
+                df = pl.DataFrame(
+                    rows,
+                    schema=columns,
+                    orient="row",
+                    schema_overrides=schema_overrides,
                 )
 
+                row_counter += df.height
+
+                progress_bar(
+                    message=f"Exporting {data_table}",
+                    current=row_counter,
+                    total=total_rows,
+                )
+
+                file_path = export_path / file_name.format(file_index=file_index)
+
                 df.write_csv(
-                    file,
+                    file=file_path,
                     compression=params.get("compression", "gzip"),
                 )
 
-                logger.debug(f"Exported {row_counter:,} rows")
+                logger.debug(
+                    f"Exported chunk {file_index} ({df.height:,} rows)"
+                )
+
                 file_index += 1
-                rows = cursor.fetchmany(max_rows)
-            logger.info(f"{row_counter:,} rows exported")
+                rows = data_cursor.fetchmany(max_rows)
+
+            logger.debug(
+                f"Successfully exported {row_counter:,} rows from table '{data_table}'"
+            )
 
         except Exception as err:
             logger.error(traceback.format_exc())

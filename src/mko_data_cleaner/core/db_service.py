@@ -2,7 +2,7 @@ import traceback
 import logging
 import sqlite3
 from functools import cached_property
-
+from sqlalchemy import create_engine
 from typing import (Any, List, Optional)
 
 from .errors import WrongDataSettings
@@ -52,7 +52,7 @@ class DBWorker:
                  date_column: str | None = None):
         self.db_file = db_file
         self.db_con = sqlite3.connect(self.db_file)
-        self.uri = f"sqlite:///{self.db_file.absolute()}"
+        self.engine = create_engine(f"sqlite:///{self.db_file}",future=True)
         self.data_tbl_name = make_valid(tbl_name)
         self.index_column = make_valid(index_column) if index_column else None
         self.date_column = make_valid(date_column) if date_column else None
@@ -72,9 +72,13 @@ class DBWorker:
         return self.data_tbl_name
 
     def _init_base(self):
-        self.db_con.cursor().execute("PRAGMA journal_mode = WAL")
-        self.db_con.cursor().execute("PRAGMA synchronous = OFF")
-        self.db_con.cursor().execute("PRAGMA temp_store = MEMORY")
+        cur = self.db_con.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=OFF")
+        cur.execute("PRAGMA temp_store=MEMORY")
+        cur.execute("PRAGMA cache_size=-100000")
+
+        cur.close()
 
     def _validate_required(self) -> None:
         for name in self.REQUIRED_FIELDS:
@@ -125,7 +129,7 @@ class DBWorker:
         query = f"CREATE {temp} TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
 
         self.perform_query(query)
-        logger.info(f'Table \'{tbl_name}\' created successfully')
+        logger.debug(f'Table \'{tbl_name}\' created successfully')
 
     def update_index_from_data(self):
         if self.index_column:
@@ -139,7 +143,7 @@ class DBWorker:
                      f"GROUP BY {self.index_column};")
             # print(query)
             self.perform_query(query)
-            logger.info(f'Table \'{self._index_tbl_name}\' updated successfully')
+            logger.debug(f'Table \'{self._index_tbl_name}\' updated successfully')
 
     def perform_query(self, query: str, *term: tuple[str]):
         try:
@@ -162,7 +166,7 @@ class DBWorker:
         try:
             self.db_con.cursor().close()
             if self.perform_query(query):
-                logger.info(f"Table '{table_name}' was successfully dropped")
+                logger.debug(f"Table '{table_name}' was successfully dropped")
                 return True
             return False
         except sqlite3.Error:
@@ -188,7 +192,7 @@ class DBWorker:
         """
         query = f"DROP TRIGGER IF EXISTS {tr_name}"
         self.perform_query(query)
-        logger.info(f"Trigger '{tr_name}' was successfully dropped")
+        logger.debug(f"Trigger '{tr_name}' was successfully dropped")
 
     def drop_triggers(self, *tr_names: str | None, tbl_name: str | None = None):
         """
@@ -232,7 +236,7 @@ class DBWorker:
         query = f"ALTER TABLE {tbl_name} ADD {col_name} {col_type.upper()};"
 
         self.perform_query(query)
-        logger.info(f"Column '{col_name}' was successfully created in '{tbl_name}'")
+        logger.debug(f"Column '{col_name}' was successfully created in '{tbl_name}'")
 
     def add_columns(self, tbl_name: str, **col_params: str):
         """
@@ -263,7 +267,7 @@ class DBWorker:
         query = f"CREATE VIRTUAL TABLE IF NOT EXISTS {search_tbl} " \
                 f"USING fts5({','.join(search_columns)}, content={tbl_name})"
         self.perform_query(query)
-        logger.info(f"Search table '{search_tbl}' was successfully created")
+        logger.debug(f"Search table '{search_tbl}' was successfully created")
         self.create_triggers(tbl_name, search_tbl, suffix, search_columns)
 
     def create_triggers(self, tbl_name, search_tbl, suffix, search_columns):
@@ -308,7 +312,7 @@ class DBWorker:
                                  )
             self.perform_query(q)
 
-        logger.info(f"Search triggers were successfully created for '{search_tbl}' ")
+        logger.debug(f"Search triggers were successfully created for '{search_tbl}' ")
 
     def create_search_table(self):
         """
@@ -327,7 +331,7 @@ class DBWorker:
         self.link_search_table(
             self._index_tbl_name or self.data_tbl_name,
             *self.search_columns)
-        logger.info(f'Datatable: {self.data_tbl_name} successfully created')
+        logger.debug(f'Datatable: {self.data_tbl_name} successfully created')
 
     def _create_index_table(self):
         if self.index_column:
@@ -491,7 +495,7 @@ class DBWorker:
         """
 
         self.perform_query(delete_sql)
-        logger.info(f"Sync {target_tbl} with {source_tbl} on {index_col}")
+        logger.debug(f"Sync {target_tbl} with {source_tbl} on {index_col}")
 
     def _build_joined_matches(self, mapping_table, temporary: bool = True):
 
@@ -522,7 +526,7 @@ class DBWorker:
 
         self.perform_query(sql)
 
-        logger.info(f"Apply delete rules to {self.target_table}")
+        logger.debug(f"Apply delete rules to {self.target_table}")
         self.perform_query(sql)
 
     def _apply_replace(self, column_names: list):
@@ -616,12 +620,12 @@ class DBWorker:
         # WHERE {target_table}.rowid = rule_values.data_rowid
         # """
 
-        logger.info(f"Apply replace rules to {self.target_table}")
+        logger.debug(f"Apply replace rules to {self.target_table}")
         self.perform_query(sql)
 
     def _apply_add(self, separator=', '):
 
-        logger.info(f"Apply add rules to {self.target_table}")
+        logger.debug(f"Apply add rules to {self.target_table}")
 
         tag_unions = []
 
@@ -732,17 +736,31 @@ class DBWorker:
             'rowid', 'column_name'
         )
 
-    def delete_base_file(self):
-        try:
-            self.db_file.unlink()
-        except Exception as err:
-            logging.error(traceback.format_exc())
-            logger.error(f'not able to delete database file {self.db_file}, {err}')
-        else:
-            logger.info(f'Data base was purified successfully')
+    def _delete_base_files(self):
+        for f in self.db_file.parent.glob(self.db_file.name + "*"):
+            try:
+                f.unlink(missing_ok=True)
+            except PermissionError:
+                logger.warning(f"Cannot delete {f}")
 
-    def __del__(self):
-        self.drop_triggers(tbl_name=self.data_tbl_name),
-        self.drop_tables(self.data_tbl_name, self.target_table)
+    def close(self):
+        logger.info(f'Cleaning up temporary files')
+        # self.drop_triggers(tbl_name=self.data_tbl_name),
+        # self.drop_tables(self.data_tbl_name, self.target_table)
+        try:
+            self.db_con.execute("PRAGMA wal_checkpoint(FULL)")
+        except Exception as e:
+            pass
+
         self.db_con.close()
-        self.delete_base_file()
+
+        if self.engine:
+            self.engine.dispose()
+
+        self._delete_base_files()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()

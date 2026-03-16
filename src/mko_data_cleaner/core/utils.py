@@ -19,6 +19,29 @@ logger = logging.getLogger(__name__)
 ALLOWED_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 
+def progress_bar(message: str, current: int, total: int) -> None:
+    """
+    Displays a dynamic progress bar by overwriting the previous line.
+
+    Args:
+        message: Message to display (e.g. "Processing files", "Reading")
+        current: Current progress step
+        total: Total number of steps
+    """
+    if total <= 0:
+        return
+
+    percent = 100 if current >= total else int(current / total * 100)
+    filled = percent // 5
+    bar = "█" * filled + "░" * (20 - filled)
+
+    print(f"\r[{bar}] {percent:3d}% ({current:,}/{total:,}) — {message} ",
+          end="", flush=True)
+    # new line after finishing the progress
+    if current==total:
+        print()
+
+
 
 def parse_action(value: str) -> ActionType | None:
     """Safely parse Action enum."""
@@ -54,8 +77,8 @@ def is_valid_name(name: str, pattern: str = ALLOWED_PATTERN) -> bool:
         raise ValueError(f"Invalid name: {name}, should be a string, {type(name)} is given")
 
     if not match(pattern, str(name)):
-        logger.info(f"The name: {str(name)} is not valid, "
-              f"use the allowed pattern {ALLOWED_PATTERN}.")
+        logger.warning(f"The name: '{str(name)}' is not valid, "
+              f"use the allowed pattern '{ALLOWED_PATTERN}'.")
         return False
     return True
 
