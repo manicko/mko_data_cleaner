@@ -1,10 +1,14 @@
+import logging
 from collections.abc import Generator
 
 import polars as pl
 
-from mko_data_cleaner.core.models import DictColumnsIndexes, ActionType, MappingColumns, MatchType
-
-import logging
+from mko_data_cleaner.core.models import (
+    ActionType,
+    DictColumnsIndexes,
+    MappingColumns,
+    MatchType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +55,17 @@ class MappingDict:
         if current_block:
             yield pl.from_dicts(current_block)
 
-
-    def generate_rules_blocks(self)-> Generator[tuple[str, pl.DataFrame]]:
-        keep_cols = [MappingColumns.mapping_index, MappingColumns.column_name, *self.extra_col_names]
+    def generate_rules_blocks(self) -> Generator[tuple[str, pl.DataFrame]]:
+        keep_cols = [
+            MappingColumns.mapping_index,
+            MappingColumns.column_name,
+            *self.extra_col_names,
+        ]
         actions = [ActionType.DELETE, ActionType.REPLACE, ActionType.ADD]
         for action in actions:
-            df_action = self.data.filter(pl.col(MappingColumns.action) == action).select(keep_cols)
+            df_action = self.data.filter(
+                pl.col(MappingColumns.action) == action
+            ).select(keep_cols)
             match action:
                 case ActionType.DELETE | ActionType.ADD:
                     yield action, df_action
@@ -76,7 +85,7 @@ class MappingDict:
 
         # ------ keep only non-empty columns
         df = self._drop_empty_columns(df)
-        self.extra_col_names = df.columns[len(action_idx):]
+        self.extra_col_names = df.columns[len(action_idx) :]
 
         df.columns = action_names + self.extra_col_names
 
@@ -86,20 +95,21 @@ class MappingDict:
         self._table_columns = list(tbl_columns)
         # update extra_col_names with names from db
         self.extra_col_names = extra_col_names.copy()
-        self.data.columns = self.data.columns[:-len(self.extra_col_names)] + self.extra_col_names
+        self.data.columns = (
+            self.data.columns[: -len(self.extra_col_names)] + self.extra_col_names
+        )
         # add fts5_search_columns
         self.data = self._build_query(self._table_columns)
         self.data = self.data.with_row_index(MappingColumns.mapping_index, offset=1)
 
-
     def _build_query(
-            self,
-            tbl_names: list[str],
-            term_col: str = MappingColumns.term,
-            search_col: str = MappingColumns.search,
-            match_type_col: str = MappingColumns.match,
-            pattern_col: str = MappingColumns.pattern,
-            column_name_col: str = MappingColumns.column_name,
+        self,
+        tbl_names: list[str],
+        term_col: str = MappingColumns.term,
+        search_col: str = MappingColumns.search,
+        match_type_col: str = MappingColumns.match,
+        pattern_col: str = MappingColumns.pattern,
+        column_name_col: str = MappingColumns.column_name,
     ) -> pl.DataFrame:
         """
         Build mapping table for SQL LIKE matching.
@@ -131,28 +141,18 @@ class MappingDict:
         """
 
         # map column index → column name
-        name_map_df = pl.DataFrame({
-            search_col: list(range(len(tbl_names))),
-            column_name_col: tbl_names
-        })
+        name_map_df = pl.DataFrame(
+            {search_col: list(range(len(tbl_names))), column_name_col: tbl_names}
+        )
 
         # ensure search column contains numbers - indexes of columns to search
         self.data.with_columns(pl.col(search_col).cast(pl.Int64))
 
-        df = self.data.join(
-            name_map_df,
-            on=search_col,
-            how="left"
-        )
+        df = self.data.join(name_map_df, on=search_col, how="left")
 
-        pattern_expr = self._build_search_like_pattern(
-            match_type_col,
-            term_col
-        )
+        pattern_expr = self._build_search_like_pattern(match_type_col, term_col)
 
-        df = df.with_columns(
-            pattern_expr.str.to_uppercase().alias(pattern_col)
-        )
+        df = df.with_columns(pattern_expr.str.to_uppercase().alias(pattern_col))
 
         return df
 
@@ -170,15 +170,11 @@ class MappingDict:
         return (
             pl.when(pl.col(match_type_col) == MatchType.FULL_MATCH)
             .then(pl.col(term_col))
-
             .when(pl.col(match_type_col) == MatchType.PARTIAL_MATCH)
             .then(pl.concat_str([pl.lit("%"), pl.col(term_col), pl.lit("%")]))
-
-            .when(pl.col(match_type_col) ==  MatchType.STARTS_WITH)
+            .when(pl.col(match_type_col) == MatchType.STARTS_WITH)
             .then(pl.concat_str([pl.col(term_col), pl.lit("%")]))
-
             .when(pl.col(match_type_col) == MatchType.ENDS_WITH)
             .then(pl.concat_str([pl.lit("%"), pl.col(term_col)]))
-
             .otherwise(None)
         )

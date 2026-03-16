@@ -1,6 +1,7 @@
 """
 mko_get_mediascope_data — основной публичный интерфейс
 """
+
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -8,8 +9,8 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from mko_data_cleaner.core.init_service import init_project
 from mko_data_cleaner.core.app_service import app_service
+from mko_data_cleaner.core.init_service import init_project
 from mko_data_cleaner.core.utils import list_files_in_directory
 
 sys.stdout.reconfigure(line_buffering=True)
@@ -77,8 +78,6 @@ def process_data(report_path: str | Path) -> None:
     if not path.exists():
         raise FileNotFoundError(f"Файл не найден: {path}")
     app_service.process_data(path)
-
-
 
 
 def initialize_settings(force: bool = False) -> Path:

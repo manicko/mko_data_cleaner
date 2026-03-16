@@ -1,22 +1,21 @@
-from re import match, sub
 import logging
 import time
 from os import PathLike
 from pathlib import Path
+from re import match, sub
 from typing import Any, Literal
 
+import yaml
+from pandas import DataFrame
 from unidecode import unidecode
 
 from mko_data_cleaner.core.errors import WrongDataSettings
 from mko_data_cleaner.core.models import ActionType, MatchType
-import yaml
-
-from pandas import DataFrame
 
 logger = logging.getLogger(__name__)
 
 # pattern used to check validity of column and table name before adding them
-ALLOWED_PATTERN = f"^[a-zA-Z_][a-zA-Z0-9_]*$"
+ALLOWED_PATTERN = "^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 
 def progress_bar(message: str, current: int, total: int) -> None:
@@ -35,12 +34,14 @@ def progress_bar(message: str, current: int, total: int) -> None:
     filled = percent // 5
     bar = "█" * filled + "░" * (20 - filled)
 
-    print(f"\r[{bar}] {percent:3d}% ({current:,}/{total:,}) — {message} ",
-          end="", flush=True)
+    print(
+        f"\r[{bar}] {percent:3d}% ({current:,}/{total:,}) — {message} ",
+        end="",
+        flush=True,
+    )
     # new line after finishing the progress
-    if current==total:
+    if current == total:
         print()
-
 
 
 def parse_action(value: str) -> ActionType | None:
@@ -59,7 +60,6 @@ def parse_match(value: str) -> MatchType | None:
         return None
 
 
-
 def get_names_index(names: list[str], index: list[int]) -> dict[int, str]:
     index = list(map(int, index))
     return {i: names[i] for i in index}
@@ -74,27 +74,31 @@ def is_valid_name(name: str, pattern: str = ALLOWED_PATTERN) -> bool:
     :return: bool, True or False
     """
     if not isinstance(name, str):
-        raise ValueError(f"Invalid name: {name}, should be a string, {type(name)} is given")
+        raise ValueError(
+            f"Invalid name: {name}, should be a string, {type(name)} is given"
+        )
 
     if not match(pattern, str(name)):
-        logger.warning(f"The name: '{str(name)}' is not valid, "
-              f"use the allowed pattern '{ALLOWED_PATTERN}'.")
+        logger.warning(
+            f"The name: '{str(name)}' is not valid, "
+            f"use the allowed pattern '{ALLOWED_PATTERN}'."
+        )
         return False
     return True
+
 
 def validate_names(*names: str) -> None:
     """Validate table and column names."""
     invalid = [name for name in names if not is_valid_name(name)]
     if invalid:
-        raise WrongDataSettings(
-            f"Invalid names: {', '.join(invalid)}"
-        )
+        raise WrongDataSettings(f"Invalid names: {', '.join(invalid)}")
+
 
 def make_valid(name: str) -> str:
     # 1. translate
     name = unidecode(name)
     # 2. clean
-    name = sub(r'[^a-zA-Z0-9_]', '', name)
+    name = sub(r"[^a-zA-Z0-9_]", "", name)
     return name
 
 
@@ -110,21 +114,21 @@ def clean_names(*names: str) -> list[str]:
     for i, n in enumerate(names):
         name = n if is_valid_name(n) else make_valid(n)
         if not name:
-            name = f'col_{i}'
+            name = f"col_{i}"
         if name in seen:
             idx = 1
-            while name + '_' + str(idx) in seen:
+            while name + "_" + str(idx) in seen:
                 idx += 1
-            name = name + '_' + str(idx)
+            name = name + "_" + str(idx)
         valid_names.append(name)
         seen.add(name)
     return valid_names
 
 
-def get_dir_content(path: str | PathLike, ext: str = 'yaml', subfolders=True):
+def get_dir_content(path: str | PathLike, ext: str = "yaml", subfolders=True):
     try:
-        subfolders = '**/' if subfolders else ''
-        files = Path(path).glob(f'{subfolders}*.{ext}')
+        subfolders = "**/" if subfolders else ""
+        files = Path(path).glob(f"{subfolders}*.{ext}")
     except Exception as err:
         raise err
     else:
@@ -166,17 +170,17 @@ def get_files_suffix(compression: str | dict = None):
 
 
 def csv_to_file(
-        data_frame: DataFrame,
-        csv_path_out: PathLike,
-        file_prefix: str = "",
-        compression: (
-                Literal["infer", "gzip", "bz2", "zip", "xz", "zstd", "tar"]
-                | None
-                | dict[str, Any]
-        ) = "infer",
-        add_time: bool = True,
-        *args,
-        **kwargs,
+    data_frame: DataFrame,
+    csv_path_out: PathLike,
+    file_prefix: str = "",
+    compression: (
+        Literal["infer", "gzip", "bz2", "zip", "xz", "zstd", "tar"]
+        | None
+        | dict[str, Any]
+    ) = "infer",
+    add_time: bool = True,
+    *args,
+    **kwargs,
 ):
     time_str = ""
     if add_time:
@@ -202,9 +206,9 @@ def csv_to_file(
 
 
 def list_files_in_directory(
-        path: str | PathLike[str],
-        extensions: tuple[str, ...] = ("yaml", "json"),
-        include_subfolders: bool = False,
+    path: str | PathLike[str],
+    extensions: tuple[str, ...] = ("yaml", "json"),
+    include_subfolders: bool = False,
 ) -> list[Path]:
     """
     Lists files in a directory with specific extensions.

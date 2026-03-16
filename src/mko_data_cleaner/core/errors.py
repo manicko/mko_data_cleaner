@@ -5,8 +5,10 @@ class NoReportFoundError(Exception):
 class WrongDataSettings(Exception):
     pass
 
+
 class DataValidationError(Exception):
     pass
+
 
 class ConfigError(Exception):
     pass

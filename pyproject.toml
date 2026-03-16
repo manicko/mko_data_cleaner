@@ -151,7 +151,7 @@ addopts = [
     "-ra",
     "-v",
     "--strict-markers",
-    "--asyncio-mode=auto"
+#    "--asyncio-mode=auto"
 ]
 console_output_style = "classic"
 testpaths = ["tests"]

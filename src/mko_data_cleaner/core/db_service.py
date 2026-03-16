@@ -1,35 +1,29 @@
-import traceback
 import logging
 import sqlite3
+import traceback
 from functools import cached_property
+from pathlib import Path
+from typing import Any
+
 from sqlalchemy import create_engine
-from typing import (Any, List, Optional)
 
 from .errors import WrongDataSettings
 from .models import ActionType, MappingColumns
-
-from .utils import clean_names, validate_names, make_valid
-from pathlib import Path
+from .utils import clean_names, make_valid, validate_names
 
 logger = logging.getLogger(__name__)
 
 # # DB table keeping schema
-MASTER_TABLE = 'sqlite_master'
+MASTER_TABLE = "sqlite_master"
 
 # # Data types used to add columns in SQLight data table
-VALID_COLUMN_DTYPES = (
-    'TEXT',
-    'NUMERIC',
-    'INTEGER',
-    'REAL',
-    'BLOB'
-)
+VALID_COLUMN_DTYPES = ("TEXT", "NUMERIC", "INTEGER", "REAL", "BLOB")
 
 DATA_TO_SQL_PARAMS = {
-    'if_exists': 'append',
-    'index': False,
-    'index_label': None,
-    'chunksize': 2000
+    "if_exists": "append",
+    "index": False,
+    "index_label": None,
+    "chunksize": 2000,
 }
 
 
@@ -48,11 +42,16 @@ class DBWorker:
         "ADD": "a",
     }
 
-    def __init__(self, db_file: Path, tbl_name: str = 'data_table', index_column: str | None = None,
-                 date_column: str | None = None):
+    def __init__(
+        self,
+        db_file: Path,
+        tbl_name: str = "data_table",
+        index_column: str | None = None,
+        date_column: str | None = None,
+    ):
         self.db_file = db_file
         self.db_con = sqlite3.connect(self.db_file)
-        self.engine = create_engine(f"sqlite:///{self.db_file}",future=True)
+        self.engine = create_engine(f"sqlite:///{self.db_file}", future=True)
         self.data_tbl_name = make_valid(tbl_name)
         self.index_column = make_valid(index_column) if index_column else None
         self.date_column = make_valid(date_column) if date_column else None
@@ -60,9 +59,9 @@ class DBWorker:
         self._data_tbl_columns = None
         self._search_columns = None
         self._extra_columns = None
-        self.non_mapped_table = 'non_mapped'
-        self._full_matches_table: str = 'full_matches_table'
-        self._joined_matches_table: str = 'joined_matches_table'
+        self.non_mapped_table = "non_mapped"
+        self._full_matches_table: str = "full_matches_table"
+        self._joined_matches_table: str = "joined_matches_table"
         self._init_base()
 
     @property
@@ -92,7 +91,7 @@ class DBWorker:
     def set_data_tbl_columns(self, *main_cols, extra_cols: list | None = None):
         extra_cols = extra_cols or []
         self._data_tbl_columns = clean_names(*main_cols, *extra_cols)
-        self._extra_columns = self.data_tbl_columns[-len(extra_cols):]
+        self._extra_columns = self.data_tbl_columns[-len(extra_cols) :]
 
     @property
     def search_columns(self):
@@ -116,34 +115,42 @@ class DBWorker:
     def get_col_names(self, index) -> str | None:
         return self.column_index.get(index, None)
 
-    def create_table(self, tbl_name: str, *tbl_columns: str, temporary: bool = False) -> None:
-        """ Creates datatable in the database using 'tbl_name' and 'tbl_columns'
+    def create_table(
+        self, tbl_name: str, *tbl_columns: str, temporary: bool = False
+    ) -> None:
+        """Creates datatable in the database using 'tbl_name' and 'tbl_columns'
         :param tbl_name: name of a table to create
         :param tbl_columns: str, list of column names
         :param temporary: bool - if true, will create temporary table
         :return:
         """
-        temp = 'TEMP' if temporary else ''
+        temp = "TEMP" if temporary else ""
         tbl_name, *tbl_columns = clean_names(tbl_name, *tbl_columns)
 
-        query = f"CREATE {temp} TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
+        query = (
+            f"CREATE {temp} TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
+        )
 
         self.perform_query(query)
-        logger.debug(f'Table \'{tbl_name}\' created successfully')
+        logger.debug(f"Table '{tbl_name}' created successfully")
 
     def update_index_from_data(self):
         if self.index_column:
-            insert_columns = select_columns = f"{', '.join(self.search_columns)}, {self.index_column}"
+            insert_columns = select_columns = (
+                f"{', '.join(self.search_columns)}, {self.index_column}"
+            )
             if self.date_column:
-                insert_columns += f', {self.date_column}'
-                select_columns += f', MAX({self.date_column})'
-            query = (f"INSERT INTO {self._index_tbl_name} ({insert_columns}) "
-                     f"SELECT {select_columns}"
-                     f"FROM {self.data_tbl_name} "
-                     f"GROUP BY {self.index_column};")
+                insert_columns += f", {self.date_column}"
+                select_columns += f", MAX({self.date_column})"
+            query = (
+                f"INSERT INTO {self._index_tbl_name} ({insert_columns}) "
+                f"SELECT {select_columns}"
+                f"FROM {self.data_tbl_name} "
+                f"GROUP BY {self.index_column};"
+            )
             # print(query)
             self.perform_query(query)
-            logger.debug(f'Table \'{self._index_tbl_name}\' updated successfully')
+            logger.debug(f"Table '{self._index_tbl_name}' updated successfully")
 
     def perform_query(self, query: str, *term: tuple[str]):
         try:
@@ -151,7 +158,9 @@ class DBWorker:
             self.db_con.cursor().close()
             self.db_con.commit()
         except sqlite3.Error as err:
-            logging.error(f"SQL Error {err}, Query = ' {query} ', Terms =' {term} ' {traceback.format_exc()}")
+            logging.error(
+                f"SQL Error {err}, Query = ' {query} ', Terms =' {term} ' {traceback.format_exc()}"
+            )
             raise err
         else:
             return q
@@ -205,9 +214,11 @@ class DBWorker:
         """
         if not tr_names:  # trying to get Trigger names from table name
             if not tbl_name:  # cancel operation if table name is not set
-                logger.error(f"Not possible to drop triggers because tbl_name is empty")
+                logger.error("Not possible to drop triggers because tbl_name is empty")
                 raise NameError("Require table name to drop triggers")
-            tr_names = f'{tbl_name}_insert;{tbl_name}_delete;{tbl_name}_update'.split(';')
+            tr_names = f"{tbl_name}_insert;{tbl_name}_delete;{tbl_name}_update".split(
+                ";"
+            )
         map(self.drop_trigger, tr_names)
 
     def tbl_exist(self, name_to_check: str) -> bool:
@@ -218,8 +229,10 @@ class DBWorker:
         :return: bool, False or True
         """
         # query returns 1 if table exists and 0 if not
-        query = f"SELECT EXISTS (SELECT 1 FROM sqlite_master " \
-                f"WHERE type = 'table' AND name = '{name_to_check}')"
+        query = (
+            f"SELECT EXISTS (SELECT 1 FROM sqlite_master "
+            f"WHERE type = 'table' AND name = '{name_to_check}')"
+        )
         # fetchone() returns tuple i.e. (1,) or (0,)
         exist = bool(self.perform_query(query).fetchone()[0])
         return exist
@@ -232,10 +245,9 @@ class DBWorker:
         :param tbl_name: str, name of a table to add columns
         :return: :bool, status True or False as value
         """
-        col_name = clean_names(col_name)
-        query = f"ALTER TABLE {tbl_name} ADD {col_name} {col_type.upper()};"
-
-        self.perform_query(query)
+        col_name = clean_names(col_name)[0]
+        sql = f'ALTER TABLE "{tbl_name}" ADD COLUMN "{col_name}" {col_type.upper()};'
+        self.perform_query(sql)
         logger.debug(f"Column '{col_name}' was successfully created in '{tbl_name}'")
 
     def add_columns(self, tbl_name: str, **col_params: str):
@@ -248,8 +260,12 @@ class DBWorker:
         for c_name, c_type in col_params.items():
             self.add_column(tbl_name, c_name, c_type)
 
-    def link_search_table(self, tbl_name: str, *search_columns: str | list[str],
-                          suffix: Optional[str] = '_fts'):
+    def link_search_table(
+        self,
+        tbl_name: str,
+        *search_columns: str | list[str],
+        suffix: str | None = "_fts",
+    ):
         """
         Creates Virtual SQLight3 FTS 5 table using provided datatable as a content table.
         And setting triggers on update, delete and insert actions to keep it synchronised to the datatable.
@@ -264,28 +280,30 @@ class DBWorker:
         search_tbl = tbl_name + suffix
         validate_names(search_tbl, *search_columns)
         # ensure that there are no table with the same name
-        query = f"CREATE VIRTUAL TABLE IF NOT EXISTS {search_tbl} " \
-                f"USING fts5({','.join(search_columns)}, content={tbl_name})"
+        query = (
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS {search_tbl} "
+            f"USING fts5({','.join(search_columns)}, content={tbl_name})"
+        )
         self.perform_query(query)
         logger.debug(f"Search table '{search_tbl}' was successfully created")
         self.create_triggers(tbl_name, search_tbl, suffix, search_columns)
 
     def create_triggers(self, tbl_name, search_tbl, suffix, search_columns):
-        columns = ','.join(search_columns)
-        new_columns = ','.join(f'new.{c}' for c in search_columns)
-        old_columns = ','.join(f'old.{c}' for c in search_columns)
+        columns = ",".join(search_columns)
+        new_columns = ",".join(f"new.{c}" for c in search_columns)
+        old_columns = ",".join(f"old.{c}" for c in search_columns)
 
         #  Triggers to keep the Search table up to date.
 
         query = {
-            'insert': '''
+            "insert": """
                       CREATE TRIGGER IF NOT EXISTS {table}_insert AFTER INSERT ON {table}
                       BEGIN
                       INSERT INTO {search_tbl} (rowid, {column_list})
                       VALUES (new.rowid, {new_columns});
                       END;
-                      ''',
-            'delete': '''
+                      """,
+            "delete": """
                       CREATE TRIGGER IF NOT EXISTS {table}_delete AFTER
                       DELETE
                       ON {table}
@@ -293,8 +311,8 @@ class DBWorker:
                       INSERT INTO {search_tbl} ({search_tbl}, rowid, {column_list})
                       VALUES ('delete', old.rowid, {old_columns});
                       END;
-                      ''',
-            'update': '''
+                      """,
+            "update": """
                       CREATE TRIGGER IF NOT EXISTS {table}_update AFTER
                       UPDATE ON {table}
                       BEGIN
@@ -303,13 +321,18 @@ class DBWorker:
                       INSERT INTO {search_tbl} (rowid, {column_list})
                       VALUES (new.rowid, {new_columns});
                       END;
-                      '''
+                      """,
         }
 
         for q_trigger in query.values():
-            q = q_trigger.format(search_tbl=search_tbl, table=tbl_name, suffix=suffix,
-                                 column_list=columns, new_columns=new_columns, old_columns=old_columns
-                                 )
+            q = q_trigger.format(
+                search_tbl=search_tbl,
+                table=tbl_name,
+                suffix=suffix,
+                column_list=columns,
+                new_columns=new_columns,
+                old_columns=old_columns,
+            )
             self.perform_query(q)
 
         logger.debug(f"Search triggers were successfully created for '{search_tbl}' ")
@@ -329,22 +352,22 @@ class DBWorker:
         self._create_index_table()
         # link base to FTS search table
         self.link_search_table(
-            self._index_tbl_name or self.data_tbl_name,
-            *self.search_columns)
-        logger.debug(f'Datatable: {self.data_tbl_name} successfully created')
+            self._index_tbl_name or self.data_tbl_name, *self.search_columns
+        )
+        logger.debug(f"Datatable: {self.data_tbl_name} successfully created")
 
     def _create_index_table(self):
         if self.index_column:
-            self._index_tbl_name = self.data_tbl_name + '_distinct'
-            index_tbl_column_names = list((
-                *self.search_columns,
-                *self.extra_columns,
-                self.index_column
-            ))
+            self._index_tbl_name = self.data_tbl_name + "_distinct"
+            index_tbl_column_names = list(
+                (*self.search_columns, *self.extra_columns, self.index_column)
+            )
             if self.date_column:
                 index_tbl_column_names.append(self.date_column)
             # create index base
-            self.create_table(self._index_tbl_name, *index_tbl_column_names, temporary=True)
+            self.create_table(
+                self._index_tbl_name, *index_tbl_column_names, temporary=True
+            )
 
     def _create_index(self, table_name: str, *columns: str, unique_index: bool = False):
         unique = "UNIQUE" if unique_index else ""
@@ -362,11 +385,9 @@ class DBWorker:
         self._create_index(self.data_tbl_name, self.index_column)
         self._create_index(self._index_tbl_name, self.index_column)
 
-    def data_chunk_to_sql(self,
-                          chunk,
-                          data_table,
-                          sql_loader_settings: dict[str, Any] = None
-                          ) -> int:
+    def data_chunk_to_sql(
+        self, chunk, data_table, sql_loader_settings: dict[str, Any] = None
+    ) -> int:
         """
         :param data_table:
         :param chunk: chunk of data as Panda's object
@@ -376,7 +397,9 @@ class DBWorker:
         """
         if sql_loader_settings is None:
             sql_loader_settings = DATA_TO_SQL_PARAMS
-        chunk.to_sql(**sql_loader_settings, name=data_table, con=self.db_con)  # load data
+        chunk.to_sql(
+            **sql_loader_settings, name=data_table, con=self.db_con
+        )  # load data
         return chunk.shape[0]
 
     def get_table_sample(self, tbl_name: str, limit: int = 2):
@@ -385,7 +408,7 @@ class DBWorker:
         :param limit:
         :return:
         """
-        query = f'SELECT * FROM {tbl_name} LIMIT {limit}'
+        query = f"SELECT * FROM {tbl_name} LIMIT {limit}"
         for tbl_row in self.perform_query(query):
             print(f"These are sample rows for {tbl_name}", flush=True)
             print(tbl_row, flush=True)
@@ -396,31 +419,29 @@ class DBWorker:
         :param tbl_name: str, table name
         :return: list of table column names
         """
-        query = f'select * from {tbl_name}'
-        cursor = self.db_con.execute(query)
-        names = list(map(lambda x: x[0], cursor.description))
-        cursor.close()
-        return names
+        sql = """
+              SELECT name
+              FROM pragma_table_info(?)
+              ORDER BY cid; 
+              """
+        cursor = self.db_con.execute(sql, (tbl_name,))
+        return [row[0] for row in cursor.fetchall()]
 
-    def build_non_mapped(self) -> List[sqlite3.Row] | None:
+    def build_non_mapped(self) -> list[sqlite3.Row] | None:
         """
         Get rows with NULL values for defined columns
         """
-        select_cols = ', '.join(self.search_columns + self.extra_columns)
-        query = f'''
+        select_cols = ", ".join(self.search_columns + self.extra_columns)
+        query = f"""
             CREATE TEMP TABLE {self.non_mapped_table} AS 
                 SELECT DISTINCT {select_cols} 
                 FROM {self.target_table} 
                 WHERE   {' | '.join(self.extra_columns)} IS NULL                
-            '''
+            """
         self.perform_query(query)
 
     def apply_mapping(
-            self,
-            mapping_table: str,
-            action_type: str,
-            extra_cols: list,
-            separator=", "
+        self, mapping_table: str, action_type: str, extra_cols: list, separator=", "
     ):
         """
         Apply mapping rules in order:
@@ -446,20 +467,12 @@ class DBWorker:
                 self.data_tbl_name,
                 self._index_tbl_name,
                 self.index_column,
-                *self.extra_columns
+                *self.extra_columns,
             )
 
-    def _sync_tables(
-            self,
-            target_tbl,
-            source_tbl,
-            index_col,
-            *cols
-    ):
+    def _sync_tables(self, target_tbl, source_tbl, index_col, *cols):
 
-        cols_update = ", ".join(
-            f"{c}=s.{c}" for c in cols if c != index_col
-        )
+        cols_update = ", ".join(f"{c}=s.{c}" for c in cols if c != index_col)
 
         update_sql = f"""
         UPDATE {target_tbl} AS t
@@ -501,7 +514,7 @@ class DBWorker:
 
         self.perform_query(f"DROP TABLE IF EXISTS {self._joined_matches_table}")
 
-        tmp = 'TEMP' if temporary else ""
+        tmp = "TEMP" if temporary else ""
         sql = f"""
         CREATE {tmp} TABLE {self._joined_matches_table} AS 
         SELECT
@@ -623,15 +636,14 @@ class DBWorker:
         logger.debug(f"Apply replace rules to {self.target_table}")
         self.perform_query(sql)
 
-    def _apply_add(self, separator=', '):
+    def _apply_add(self, separator=", "):
 
         logger.debug(f"Apply add rules to {self.target_table}")
 
         tag_unions = []
 
         for col in self.extra_columns:
-            tag_unions.append(
-                f"""
+            tag_unions.append(f"""
                 SELECT
                     rm.data_rowid AS rowid,
                     '{col}' AS column_name,
@@ -639,8 +651,7 @@ class DBWorker:
                 FROM {self._joined_matches_table} rm
                 WHERE rm.{col} IS NOT NULL
                 AND rm.{col} != ''
-                """
-            )
+                """)
 
         tag_expand_query = "\nUNION ALL\n".join(tag_unions)
 
@@ -692,8 +703,7 @@ class DBWorker:
         union_queries = []
 
         for col in self.search_columns:
-            union_queries.append(
-                f"""
+            union_queries.append(f"""
                 SELECT DISTINCT 
                     data.rowid AS data_rowid,
                     rules.{index_col}                                       
@@ -702,8 +712,7 @@ class DBWorker:
                 ON rules.{column_name_col} = '{col}'
                 AND rules.{pattern_col} IS NOT NULL
                 AND UPPER(data.{col}) LIKE rules.{pattern_col}
-                """
-            )
+                """)
 
         rule_match_query = "\nUNION ALL\n".join(union_queries)
 
@@ -715,26 +724,19 @@ class DBWorker:
          """
         self.perform_query(sql)
 
-        self._create_index(matches_table, 'data_rowid')
+        self._create_index(matches_table, "data_rowid")
         self._create_index(matches_table, index_col)
         self.drop_table(mapping_table)
 
     def _ensure_tags_table(self):
         self.create_table(
-            'data_table_tags',
-            'rowid', 'column_name', 'value',
-            temporary=True
+            "data_table_tags", "rowid", "column_name", "value", temporary=True
         )
 
         self._create_index(
-            'data_table_tags',
-            'rowid', 'column_name', 'value',
-            unique_index=True
+            "data_table_tags", "rowid", "column_name", "value", unique_index=True
         )
-        self._create_index(
-            'data_table_tags',
-            'rowid', 'column_name'
-        )
+        self._create_index("data_table_tags", "rowid", "column_name")
 
     def _delete_base_files(self):
         for f in self.db_file.parent.glob(self.db_file.name + "*"):
@@ -744,12 +746,12 @@ class DBWorker:
                 logger.warning(f"Cannot delete {f}")
 
     def close(self):
-        logger.info(f'Cleaning up temporary files')
+        logger.info("Cleaning up temporary files")
         # self.drop_triggers(tbl_name=self.data_tbl_name),
         # self.drop_tables(self.data_tbl_name, self.target_table)
         try:
             self.db_con.execute("PRAGMA wal_checkpoint(FULL)")
-        except Exception as e:
+        except Exception:
             pass
 
         self.db_con.close()

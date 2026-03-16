@@ -46,7 +46,6 @@ class AppPaths(BaseModel):
     def app_config(self) -> Path:
         return Path(self.user_settings_dir, "app_config.yaml")
 
-
     @property
     def log_config(self) -> Path:
         return Path(self.user_settings_dir, "log_config.yaml")

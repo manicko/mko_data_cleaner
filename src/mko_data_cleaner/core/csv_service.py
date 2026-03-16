@@ -1,12 +1,12 @@
-import os
 import logging
+import os
+import sqlite3
 import traceback
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator, Optional, Literal
 from time import strftime
 
 import polars as pl
-import sqlite3
 
 from .utils import get_dir_content, progress_bar
 
@@ -29,14 +29,14 @@ class CSVWorker:
     DATE_SAMPLE_SIZE = 500
 
     def __init__(
-            self,
-            data_path: str | os.PathLike,
-            data_settings: dict,
-            reader_settings: dict,
-            dict_path: str | os.PathLike,
-            dict_settings: dict,
-            export_path: str | os.PathLike,
-            export_settings: dict,
+        self,
+        data_path: str | os.PathLike,
+        data_settings: dict,
+        reader_settings: dict,
+        dict_path: str | os.PathLike,
+        dict_settings: dict,
+        export_path: str | os.PathLike,
+        export_settings: dict,
     ):
 
         self.data_settings = data_settings
@@ -46,10 +46,12 @@ class CSVWorker:
         self.export_path = Path(export_path)
         self.export_settings = export_settings
         self.data_path = Path(data_path)
-        self.data_files = list(get_dir_content(
-            self.data_path,
-            ext=self.data_settings.get("extension", "csv"),
-        ))
+        self.data_files = list(
+            get_dir_content(
+                self.data_path,
+                ext=self.data_settings.get("extension", "csv"),
+            )
+        )
         self.sample_data_file = self.data_files[0]
         self.source_headers = self.get_csv_headers(self.sample_data_file)
 
@@ -70,9 +72,9 @@ class CSVWorker:
 
     @staticmethod
     def _is_date_column(
-            series: pl.Series,
-            date_regex: str,
-            threshold: float = 0.8,
+        series: pl.Series,
+        date_regex: str,
+        threshold: float = 0.8,
     ) -> bool:
         """
         Check if a Series likely contains dates.
@@ -104,11 +106,7 @@ class CSVWorker:
 
         return match_ratio >= threshold
 
-    def _detect_date_column(
-            self,
-            df: pl.DataFrame,
-            column: str = None
-    ) -> str | None:
+    def _detect_date_column(self, df: pl.DataFrame, column: str = None) -> str | None:
         """
         Check if column contains dates and if not or not provided,
         trying to check automatically.
@@ -132,16 +130,20 @@ class CSVWorker:
             except pl.exceptions.ColumnNotFoundError:
                 logger.error(f"Date column {column} not found.")
 
-        for idx, col in enumerate(df.columns):
+        for _, col in enumerate(df.columns):
             if self._is_date_column(df[col], self.DATE_REGEX):
                 return col
         return None
 
     def check_date_column(self, column: str = None) -> tuple[int, str] | None:
-        df = pl.read_csv(self.sample_data_file, n_rows=self.DATE_SAMPLE_SIZE, **self.reader_settings)
+        df = pl.read_csv(
+            self.sample_data_file, n_rows=self.DATE_SAMPLE_SIZE, **self.reader_settings
+        )
         return self._detect_date_column(df, column)
 
-    def _read_csv_in_chunks(self, csv_file, headers) -> Generator[pl.DataFrame, None, None]:
+    def _read_csv_in_chunks(
+        self, csv_file, headers
+    ) -> Generator[pl.DataFrame, None, None]:
         """
         Stream CSV chunks using Polars.
 
@@ -166,18 +168,18 @@ class CSVWorker:
             logger.error(traceback.format_exc())
             raise err
 
-    def get_data_chunks(self, col_names: list[str]) -> Generator[pl.DataFrame, None, None]:
+    def get_data_chunks(
+        self, col_names: list[str]
+    ) -> Generator[pl.DataFrame, None, None]:
         """Yield CSV chunks from all files."""
         total = len(self.data_files)
-        logger.info("Reading of %d files from folder %s",
-                    total, self.data_path)
+        logger.info("Reading of %d files from folder %s", total, self.data_path)
 
         for i, file in enumerate(self.data_files, start=1):
             logger.debug("Reading file: %s", file)
             progress_bar(message="Reading data", current=i, total=total)
 
             yield from self._read_csv_in_chunks(file, col_names)
-
 
     # ---------------------------------------------------------
     # DICTIONARY
@@ -192,8 +194,8 @@ class CSVWorker:
         try:
             dfs = []
             for file in get_dir_content(
-                    self.dict_path.parent,
-                    self.dict_settings.get("extension", ".csv"),
+                self.dict_path.parent,
+                self.dict_settings.get("extension", ".csv"),
             ):
                 df = pl.read_csv(file, **self.reader_settings)
                 dfs.append(df)
@@ -223,7 +225,7 @@ class CSVWorker:
         return f"{name_prefix}_{time_str}_{name_suffix}{ext}"
 
     @staticmethod
-    def get_files_suffix(compression: Optional[str | dict]) -> str:
+    def get_files_suffix(compression: str | dict | None) -> str:
         base = ".csv"
         if not compression or compression == "infer":
             return base
@@ -250,11 +252,11 @@ class CSVWorker:
     # ---------------------------------------------------------
 
     def export_sql_to_csv(
-            self,
-            db_con: sqlite3.Connection,
-            data_table: str,
-            file_prefix: Optional[str] = None,
-            export_path: Path | str | None = None,
+        self,
+        db_con: sqlite3.Connection,
+        data_table: str,
+        file_prefix: str | None = None,
+        export_path: Path | str | None = None,
     ):
         """
         Export SQLite table to CSV files using Polars.
@@ -340,9 +342,7 @@ class CSVWorker:
                     compression=params.get("compression", "gzip"),
                 )
 
-                logger.debug(
-                    f"Exported chunk {file_index} ({df.height:,} rows)"
-                )
+                logger.debug(f"Exported chunk {file_index} ({df.height:,} rows)")
 
                 file_index += 1
                 rows = data_cursor.fetchmany(max_rows)
