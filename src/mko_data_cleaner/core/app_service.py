@@ -182,7 +182,7 @@ class AppService:
                     mapping_table="mapping_table",
                     action_type=action,
                     extra_cols=rules_columns,
-                    separator=','
+                    separator= self.app_config.dict_file_settings.add_separator,
                 )
 
             # checking non mapped data

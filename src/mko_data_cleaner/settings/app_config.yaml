@@ -12,6 +12,7 @@
   },
   'dict_file_settings': {
     'extension': 'gz',
+    'add_separator': ', ',
     'col_indexes': { # columns' indexes in the mapping dictionary containing settings
       'action': 0,  # update or delete setting
       'match': 1,

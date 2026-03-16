@@ -55,10 +55,8 @@ class MappingColumns(StrEnum):
 
     # generated
     mapping_index = 'mapping_index'
-    column_name = 'column_name' # name based on search column with index
+    column_name = 'column_name'  # name based on search column with index
     pattern = 'pattern'
-
-
 
 
 class DictColumnsIndexes(BaseModel):
@@ -73,7 +71,7 @@ class DataDict(BaseModel):
     model_config = ConfigDict(extra="allow")
     extension: DataFileExtension
     col_indexes: DictColumnsIndexes = DictColumnsIndexes()
-
+    add_separator: str = ', '
 
 # ---------------Database
 class TableModel(BaseModel):
