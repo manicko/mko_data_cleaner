@@ -152,14 +152,14 @@ class DBWorker:
             self.perform_query(query)
             logger.debug(f"Table '{self._index_tbl_name}' updated successfully")
 
-    def perform_query(self, query: str, *term: tuple[str]):
+    def perform_query(self, query: str, params: tuple | None = None):
         try:
-            q = self.db_con.cursor().execute(query, term)
+            q = self.db_con.cursor().execute(query, params or ())
             self.db_con.cursor().close()
             self.db_con.commit()
         except sqlite3.Error as err:
             logging.error(
-                f"SQL Error {err}, Query = ' {query} ', Terms =' {term} ' {traceback.format_exc()}"
+                f"SQL Error {err}, Query = ' {query} ', Terms =' {params} ' {traceback.format_exc()}"
             )
             raise err
         else:
@@ -221,21 +221,30 @@ class DBWorker:
             )
         map(self.drop_trigger, tr_names)
 
-    def tbl_exist(self, name_to_check: str) -> bool:
-        """
-        Check whether table with the name 'name_to_check' already in database.
-        To avoid creation of a table with a same name as existing.
-        :param name_to_check: str, the name to be checked in database
-        :return: bool, False or True
-        """
-        # query returns 1 if table exists and 0 if not
-        query = (
-            f"SELECT EXISTS (SELECT 1 FROM sqlite_master "
-            f"WHERE type = 'table' AND name = '{name_to_check}')"
-        )
-        # fetchone() returns tuple i.e. (1,) or (0,)
-        exist = bool(self.perform_query(query).fetchone()[0])
-        return exist
+    # def tbl_exist(self, name_to_check: str) -> bool:
+    #     """
+    #     Check whether table with the name 'name_to_check' already in database.
+    #     To avoid creation of a table with a same name as existing.
+    #     :param name_to_check: str, the name to be checked in database
+    #     :return: bool, False or True
+    #     """
+    #     # query returns 1 if table exists and 0 if not
+    #     query = (
+    #         f"SELECT EXISTS (SELECT 1 FROM sqlite_master "
+    #         f"WHERE type = 'table' AND name = '{name_to_check}')"
+    #     )
+    #     # fetchone() returns tuple i.e. (1,) or (0,)
+    #     exist = bool(self.perform_query(query).fetchone()[0])
+    #     return exist
+
+    def tbl_exists(self, name: str) -> bool:
+        sql = """
+              SELECT name FROM sqlite_master  WHERE name = ?
+              UNION
+              SELECT name FROM sqlite_temp_master WHERE name = ?
+              """
+        rows = self.db_con.execute(sql, (name, name)).fetchall()
+        return len(rows) > 0
 
     def add_column(self, tbl_name: str, col_name: str, col_type: str):
         """

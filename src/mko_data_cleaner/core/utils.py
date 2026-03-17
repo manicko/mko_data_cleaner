@@ -1,16 +1,13 @@
 import logging
-import time
 from os import PathLike
 from pathlib import Path
 from re import match, sub
-from typing import Any, Literal
+from typing import Any
 
 import yaml
-from pandas import DataFrame
 from unidecode import unidecode
 
 from mko_data_cleaner.core.errors import WrongDataSettings
-from mko_data_cleaner.core.models import ActionType, MatchType
 
 logger = logging.getLogger(__name__)
 
@@ -42,27 +39,6 @@ def progress_bar(message: str, current: int, total: int) -> None:
     # new line after finishing the progress
     if current == total:
         print()
-
-
-def parse_action(value: str) -> ActionType | None:
-    """Safely parse Action enum."""
-    try:
-        return ActionType(value)
-    except ValueError:
-        return None
-
-
-def parse_match(value: str) -> MatchType | None:
-    """Safely parse Match enum."""
-    try:
-        return MatchType(value)
-    except ValueError:
-        return None
-
-
-def get_names_index(names: list[str], index: list[int]) -> dict[int, str]:
-    index = list(map(int, index))
-    return {i: names[i] for i in index}
 
 
 def is_valid_name(name: str, pattern: str = ALLOWED_PATTERN) -> bool:
@@ -125,86 +101,6 @@ def clean_names(*names: str) -> list[str]:
     return valid_names
 
 
-def get_dir_content(path: str | PathLike, ext: str = "yaml", subfolders=True):
-    try:
-        subfolders = "**/" if subfolders else ""
-        files = Path(path).glob(f"{subfolders}*.{ext}")
-    except Exception as err:
-        raise err
-    else:
-        return files
-
-
-def get_files_suffix(compression: str | dict = None):
-    """Возвращает полное расширение файла с учётом сжатия.
-    Всегда нормализует gzip → .gz (стандартное и надёжное расширение).
-    """
-    base = ".csv"
-
-    if compression is None or compression == "infer" or not compression:
-        return base
-
-    # Получаем метод сжатия
-    if isinstance(compression, dict):
-        method = compression.get("method", "").lower().strip()
-    else:
-        method = str(compression).lower().strip()
-
-    # Нормализация gzip (самая частая проблема)
-    if method in ("gzip", ".gzip", "gz", ".gz"):
-        return base + ".gz"
-
-    # Другие популярные сжатия
-    elif method in ("bz2", "bzip2"):
-        return base + ".bz2"
-    elif method in ("xz",):
-        return base + ".xz"
-    elif method in ("zip",):
-        return base + ".zip"
-    elif method in ("zstd",):
-        return base + ".zst"
-
-    else:
-        clean = method.strip(".")
-        return base + "." + clean
-
-
-def csv_to_file(
-    data_frame: DataFrame,
-    csv_path_out: PathLike,
-    file_prefix: str = "",
-    compression: (
-        Literal["infer", "gzip", "bz2", "zip", "xz", "zstd", "tar"]
-        | None
-        | dict[str, Any]
-    ) = "infer",
-    add_time: bool = True,
-    *args,
-    **kwargs,
-):
-    time_str = ""
-    if add_time:
-        time_str = "_" + time.strftime("%Y%m%d_%H%M%S")
-    ext = get_files_suffix(compression)
-    out_file = Path(csv_path_out, f"{file_prefix}{time_str}{ext}")
-
-    try:
-        encoding = kwargs.pop("encoding", "utf-8-sig")
-        data_frame.to_csv(
-            *args,
-            path_or_buf=out_file,
-            index=False,
-            mode="x",
-            decimal=",",
-            sep=";",
-            encoding=encoding,
-            compression=compression,
-            **kwargs,
-        )
-    except FileExistsError:
-        logger.warning(f"File report {out_file} already exists. Skip it.")
-
-
 def list_files_in_directory(
     path: str | PathLike[str],
     extensions: tuple[str, ...] = ("yaml", "json"),
@@ -230,27 +126,6 @@ def list_files_in_directory(
     except Exception as err:
         logger.exception(f"Error reading directory {path}: {err}")
         return []
-
-
-def ensure_path_exists(path: Path) -> None:
-    """
-    Ensures that a given path exists, creating directories if necessary.
-
-    Args:
-        path (Path): Path to a file or directory.
-
-    Raises:
-        ValueError: If the path cannot be created.
-    """
-    try:
-        if path.exists():
-            return  # Path already exists, no action needed
-        if path.suffix:  # If it's a file, create its parent directory
-            path.parent.mkdir(parents=True, exist_ok=True)
-        else:  # If it's a directory, create it
-            path.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        raise ValueError(f"Failed to create path {path}: {e}") from e
 
 
 def yaml_to_dict(file: str | PathLike) -> dict[str, Any] | None:

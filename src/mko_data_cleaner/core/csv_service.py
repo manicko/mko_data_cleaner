@@ -8,7 +8,7 @@ from time import strftime
 
 import polars as pl
 
-from .utils import get_dir_content, progress_bar
+from .utils import list_files_in_directory, progress_bar
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +46,12 @@ class CSVWorker:
         self.export_path = Path(export_path)
         self.export_settings = export_settings
         self.data_path = Path(data_path)
-        self.data_files = list(
-            get_dir_content(
-                self.data_path,
-                ext=self.data_settings.get("extension", "csv"),
-            )
+        ext = self.data_settings.get("extension", "csv")
+        self.data_files = list_files_in_directory(
+            self.data_path,
+            extensions=(ext,),
         )
+
         self.sample_data_file = self.data_files[0]
         self.source_headers = self.get_csv_headers(self.sample_data_file)
 
@@ -193,9 +193,9 @@ class CSVWorker:
     def get_merged_dictionary(self):
         try:
             dfs = []
-            for file in get_dir_content(
-                self.dict_path.parent,
-                self.dict_settings.get("extension", ".csv"),
+            ext = self.dict_settings.get("extension", ".csv")
+            for file in list_files_in_directory(
+                self.dict_path.parent, extensions=(ext,)
             ):
                 df = pl.read_csv(file, **self.reader_settings)
                 dfs.append(df)
