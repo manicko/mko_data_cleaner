@@ -13,6 +13,7 @@ description = "Tool to load data."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "adbc-driver-sqlite>=1.10.0",
     "pandas>=2.2.0",
     "platformdirs>=4.7.0",
     "polars>=1.38.1",
@@ -21,7 +22,7 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "python-dateutil>=2.8.0",
     "PyYAML>=6.0.1",
-    "sqlalchemy>=2.0.48",
+    #    "sqlalchemy>=2.0.48",
     "typer>=0.24.0",
     "Unidecode>=1.3.8",
     "urllib3>=2.1.0",

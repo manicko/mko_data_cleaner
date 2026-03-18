@@ -4,12 +4,12 @@ import traceback
 from functools import cached_property
 from pathlib import Path
 from typing import Any
-
-from sqlalchemy import create_engine
+import polars as pl
 
 from .errors import WrongDataSettings
 from .models import ActionType, MappingColumns
 from .utils import clean_names, make_valid, validate_names
+import adbc_driver_sqlite.dbapi as adb
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +48,15 @@ class DBWorker:
         tbl_name: str = "data_table",
         index_column: str | None = None,
         date_column: str | None = None,
+        use_temp_tables:bool = True,
     ):
         self.db_file = db_file
         self.db_con = sqlite3.connect(self.db_file)
-        self.engine = create_engine(f"sqlite:///{self.db_file}", future=True)
+        self.db_adb_con = adb.connect(str(self.db_file.as_posix()))
         self.data_tbl_name = make_valid(tbl_name)
         self.index_column = make_valid(index_column) if index_column else None
         self.date_column = make_valid(date_column) if date_column else None
+        self.use_temp_tables = use_temp_tables
         self._index_tbl_name = None
         self._data_tbl_columns = None
         self._search_columns = None
@@ -144,7 +146,7 @@ class DBWorker:
                 select_columns += f", MAX({self.date_column})"
             query = (
                 f"INSERT INTO {self._index_tbl_name} ({insert_columns}) "
-                f"SELECT {select_columns}"
+                f"SELECT {select_columns} "
                 f"FROM {self.data_tbl_name} "
                 f"GROUP BY {self.index_column};"
             )
@@ -375,7 +377,7 @@ class DBWorker:
                 index_tbl_column_names.append(self.date_column)
             # create index base
             self.create_table(
-                self._index_tbl_name, *index_tbl_column_names, temporary=True
+                self._index_tbl_name, *index_tbl_column_names, temporary=self.use_temp_tables
             )
 
     def _create_index(self, table_name: str, *columns: str, unique_index: bool = False):
@@ -519,11 +521,11 @@ class DBWorker:
         self.perform_query(delete_sql)
         logger.debug(f"Sync {target_tbl} with {source_tbl} on {index_col}")
 
-    def _build_joined_matches(self, mapping_table, temporary: bool = True):
+    def _build_joined_matches(self, mapping_table):
 
         self.perform_query(f"DROP TABLE IF EXISTS {self._joined_matches_table}")
 
-        tmp = "TEMP" if temporary else ""
+        tmp = "TEMP" if self.use_temp_tables else ""
         sql = f"""
         CREATE {tmp} TABLE {self._joined_matches_table} AS 
         SELECT
@@ -739,13 +741,65 @@ class DBWorker:
 
     def _ensure_tags_table(self):
         self.create_table(
-            "data_table_tags", "rowid", "column_name", "value", temporary=True
+            "data_table_tags", "rowid", "column_name", "value", temporary=self.use_temp_tables
         )
 
         self._create_index(
             "data_table_tags", "rowid", "column_name", "value", unique_index=True
         )
         self._create_index("data_table_tags", "rowid", "column_name")
+
+
+
+
+    def _create_table_from_df(self, df: pl.DataFrame, table: str):
+        def pl_to_sqlite(dtype):
+            if dtype == pl.Int64:
+                return "INTEGER"
+            if dtype == pl.Float64:
+                return "REAL"
+            return "TEXT"
+
+        cols = [
+            f"{name} {pl_to_sqlite(dtype)}"
+            for name, dtype in zip(df.columns, df.dtypes)
+        ]
+
+        schema = ", ".join(cols)
+
+        self.db_con.execute(f"CREATE TABLE {table} ({schema})")
+
+    def polars_to_sqlite(self,
+            df: pl.DataFrame,
+            table: str,
+            columns: list[str],
+            if_exists: str = "append",  # append | replace
+    ):
+        """
+        Write Polars DataFrame to SQLite.
+
+        Args:
+            df: Polars DataFrame
+            table: table name
+            columns: column names
+            if_exists:
+                - append: insert into existing table
+                - replace: drop + recreate table
+                - truncate: delete data, keep schema
+        """
+
+        if if_exists == "replace":
+            self.drop_table(table)
+            self._create_table_from_df(df, table)
+
+
+        placeholders = ",".join(["?"] * len(df.columns))
+        query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
+
+        self.perform_query(query)
+        self.db_con.cursor().executemany(query, df.iter_rows())
+        self.db_con.commit()
+
 
     def _delete_base_files(self):
         for f in self.db_file.parent.glob(self.db_file.name + "*"):
@@ -764,9 +818,7 @@ class DBWorker:
             pass
 
         self.db_con.close()
-
-        if self.engine:
-            self.engine.dispose()
+        self.db_adb_con.close()
 
         self._delete_base_files()
 
@@ -774,4 +826,5 @@ class DBWorker:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        self.close()
+        pass
+        # self.close()

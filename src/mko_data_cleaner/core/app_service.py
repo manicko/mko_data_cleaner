@@ -130,10 +130,12 @@ class AppService:
             ):
                 rows_count += chunk.write_database(
                     table_name=db_worker.data_tbl_name,
-                    connection=db_worker.engine,
+                    connection=db_worker.db_adb_con,
+                    engine="adbc",
                     if_table_exists="append",
                 )
                 logger.debug(f"write_database → {rows_count:,} rows")
+            db_worker.db_adb_con.commit()
 
             logger.info(f"{rows_count:,} rows were loaded to data table")
 
@@ -149,10 +151,11 @@ class AppService:
                 ]
             ).write_database(
                 table_name="temp_tbl",
-                connection=db_worker.engine,
+                connection=db_worker.db_adb_con,
+                engine="adbc",
                 if_table_exists="replace",
             )
-
+            db_worker.db_adb_con.commit()
             db_worker.create_rules_matches(mapping_table="temp_tbl")
 
             rules_count_total = mapping_dict.data.height
@@ -169,9 +172,11 @@ class AppService:
 
                 data.write_database(
                     table_name="mapping_table",
-                    connection=db_worker.engine,
+                    connection=db_worker.db_adb_con,
+                    engine="adbc",
                     if_table_exists="replace",
                 )
+                db_worker.db_adb_con.commit()
                 rules_columns = data.columns.copy()
 
                 db_worker.apply_mapping(
@@ -213,4 +218,4 @@ app_service = AppService(app_paths=APP_PATHS, resolver=PathResolver(APP_PATHS.us
 logging.config.dictConfig(app_service.log_config.model_dump())
 
 if __name__ == "__main__":
-    app_service.run_report(r"data\tefal")
+    app_service.run_report(r"data\mvideo")
