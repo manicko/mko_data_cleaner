@@ -6,7 +6,7 @@
     'db_file': 'data_base/db_example.db'
   },
   'data_file_settings': {
-    'extension': 'csv', # data files'  extension
+    'extension': 'gz', # data files'  extension
     'index_column': 'AdId',
     'date_column': 'researchDate' #'researchDate' researchMonth
   },

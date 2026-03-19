@@ -555,94 +555,29 @@ class DBWorker:
 
     def _apply_replace(self, column_names: list):
 
-        extra_cols = set(self.extra_columns) & set(column_names)
-        update_clause = ",\n".join(f"{col} = jm.{col}" for col in extra_cols)
-        #
-        # sql =f"""
-        #         UPDATE data_table_distinct
-        #         SET
-        #             {update_clause}
-        #         FROM {self._joined_matches_table} jm
-        #         WHERE {self.target_table}.rowid = jm.data_rowid
-        #               AND jm.rowid = (
-        #                 SELECT rowid
-        #                 FROM {self._joined_matches_table} jm2
-        #                 WHERE jm2.data_rowid = jm.data_rowid
-        #                 ORDER BY jm2.{MappingColumns.mapping_index} DESC
-        #                 LIMIT 1
-        #             );
-        #
-        #         """
+        extra_cols = [col for col in self.extra_columns if col in column_names]
+
+        select_cols = ",\n".join(f"{col}" for col in extra_cols)
+        update_clause = ",\n".join(f"{col} = rr.{col}" for col in extra_cols)
+
         sql = f"""
-                    UPDATE {self.target_table}
-                    SET {update_clause}                    
-                    FROM {self._joined_matches_table} jm
-                    JOIN (
-                        SELECT
-                            data_rowid,
-                            MAX ({MappingColumns.mapping_index}) AS max_idx
-                        FROM {self._joined_matches_table}
-                        GROUP BY data_rowid
-                    ) mx
-                    ON mx.data_rowid = jm.data_rowid
-                    AND mx.max_idx = jm.{MappingColumns.mapping_index}
-                    WHERE data_table_distinct.rowid = jm.data_rowid;
-            """
-
-        # select_cols = ",\n".join(f"{col}" for col in extra_cols)
-        # update_clause = ",\n".join(f"{col} = rr.{col}" for col in extra_cols)
-        #
-        # sql = f"""
-        #         WITH ranked_rules AS (
-        #             SELECT
-        #                 data_rowid,
-        #                 {select_cols},
-        #                 ROW_NUMBER() OVER(
-        #                     PARTITION BY data_rowid
-        #                     ORDER BY {MappingColumns.mapping_index} DESC
-        #                 ) AS rn
-        #             FROM {self._joined_matches_table}
-        #         )
-        #         UPDATE {self.target_table}
-        #         SET
-        #             {update_clause}
-        #         FROM ranked_rules rr
-        #         WHERE rr.rn = 1
-        #         AND {self.target_table}.rowid = rr.data_rowid
-        #         """
-
-        # select_cols = ",\n".join(f"{col}" for col in extra_cols)
-
-        # update_clause = ",\n".join(
-        #     f"{col} = rule_values.{col}"
-        #     for col in extra_cols
-        # )
-        # sql = f"""
-        # WITH ranked_rules AS (
-        #     SELECT
-        #         r.data_rowid,
-        #         {select_cols},
-        #         ROW_NUMBER() OVER(
-        #             PARTITION BY r.data_rowid
-        #             ORDER BY r.{MappingColumns.mapping_index} DESC
-        #         ) AS rn
-        #     FROM {self._joined_matches_table} r
-        # ),
-        #
-        # rule_values AS (
-        #     SELECT
-        #         data_rowid,
-        #         {select_cols}
-        #     FROM ranked_rules
-        #     WHERE rn = 1
-        # )
-        #
-        # UPDATE {target_table}
-        # SET
-        #     {update_clause}
-        # FROM rule_values
-        # WHERE {target_table}.rowid = rule_values.data_rowid
-        # """
+                WITH ranked_rules AS (
+                    SELECT
+                        data_rowid,
+                        {select_cols},
+                        ROW_NUMBER() OVER(
+                            PARTITION BY data_rowid
+                            ORDER BY {MappingColumns.mapping_index} DESC, rowid DESC
+                        ) AS rn
+                    FROM {self._joined_matches_table}
+                )
+                UPDATE {self.target_table}
+                SET
+                    {update_clause}
+                FROM ranked_rules rr
+                WHERE rr.rn = 1
+                AND {self.target_table}.rowid = rr.data_rowid
+                """
 
         logger.debug(f"Apply replace rules to {self.target_table}")
         self.perform_query(sql)
