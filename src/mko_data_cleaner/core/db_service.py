@@ -826,5 +826,5 @@ class DBWorker:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        pass
-        # self.close()
+        # pass
+        self.close()

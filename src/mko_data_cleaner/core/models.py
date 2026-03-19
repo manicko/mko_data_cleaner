@@ -83,10 +83,8 @@ class DataFile(BaseModel):
 class PolarsWriteCSV(BaseModel):
     model_config = ConfigDict(extra="allow")
     separator: str = ";"
-    encoding: EncodingStr = "utf-8"
     decimal_comma: bool = True
     include_header: bool = True
-    ignore_errors: bool = True
     chunk_size: NonNegativeInt = 10000
     compression: Literal["gzip", "bz2", "zip", "xz", "zstd"] | None = "gzip"
 

@@ -291,7 +291,8 @@ class CSVWorker:
             file_name = self.get_file_name(file_prefix, "{file_index}")
 
             params = self.export_settings.copy()
-            max_rows = params.pop("chunksize", 10000)
+
+            max_rows = params.pop("chunk_size", 10000)
 
             file_index = 1
             row_counter = 0
@@ -339,7 +340,7 @@ class CSVWorker:
 
                 df.write_csv(
                     file=file_path,
-                    compression=params.get("compression", "gzip"),
+                    **params,
                 )
 
                 logger.debug(f"Exported chunk {file_index} ({df.height:,} rows)")

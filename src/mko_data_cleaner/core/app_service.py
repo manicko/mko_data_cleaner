@@ -197,6 +197,8 @@ class AppService:
             )
 
             # synchronizing and exporting
+
+            print("Synchronising index table with data table")
             db_worker.sync_with_data_table()
 
             csv_worker.export_sql_to_csv(
