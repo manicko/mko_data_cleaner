@@ -198,7 +198,8 @@ class AppService:
 
             # synchronizing and exporting
 
-            print("Synchronising index table with data table")
+            print("Synchronizing the index table with the data table is in progress. "
+                  "Please be patient, this may take some time.", flush=True)
             db_worker.sync_with_data_table()
 
             csv_worker.export_sql_to_csv(
