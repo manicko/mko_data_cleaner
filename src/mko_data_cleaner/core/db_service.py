@@ -4,12 +4,12 @@ import traceback
 from functools import cached_property
 from pathlib import Path
 from typing import Any
-import polars as pl
+
+import adbc_driver_sqlite.dbapi as adb
 
 from .errors import WrongDataSettings
 from .models import ActionType, MappingColumns
 from .utils import clean_names, make_valid, validate_names
-import adbc_driver_sqlite.dbapi as adb
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class DBWorker:
         tbl_name: str = "data_table",
         index_column: str | None = None,
         date_column: str | None = None,
-        use_temp_tables:bool = True,
+        use_temp_tables: bool = True,
     ):
         self.db_file = db_file
         self.db_con = sqlite3.connect(self.db_file)
@@ -61,10 +61,16 @@ class DBWorker:
         self._data_tbl_columns = None
         self._search_columns = None
         self._extra_columns = None
+        self.use_fts = False
+        self._fts_table_name: str | None = None
         self.non_mapped_table = "non_mapped"
         self._full_matches_table: str = "full_matches_table"
         self._joined_matches_table: str = "joined_matches_table"
         self._init_base()
+
+    # ---------------------------------------------------------
+    # properties
+    # ---------------------------------------------------------
 
     @property
     def target_table(self):
@@ -72,28 +78,9 @@ class DBWorker:
             return self._index_tbl_name
         return self.data_tbl_name
 
-    def _init_base(self):
-        cur = self.db_con.cursor()
-        cur.execute("PRAGMA journal_mode=WAL")
-        cur.execute("PRAGMA synchronous=OFF")
-        cur.execute("PRAGMA temp_store=MEMORY")
-        cur.execute("PRAGMA cache_size=-100000")
-
-        cur.close()
-
-    def _validate_required(self) -> None:
-        for name in self.REQUIRED_FIELDS:
-            if not getattr(self, name):
-                raise WrongDataSettings(f"{name} not set")
-
     @property
     def data_tbl_columns(self):
         return self._data_tbl_columns
-
-    def set_data_tbl_columns(self, *main_cols, extra_cols: list | None = None):
-        extra_cols = extra_cols or []
-        self._data_tbl_columns = clean_names(*main_cols, *extra_cols)
-        self._extra_columns = self.data_tbl_columns[-len(extra_cols) :]
 
     @property
     def search_columns(self):
@@ -117,42 +104,93 @@ class DBWorker:
     def get_col_names(self, index) -> str | None:
         return self.column_index.get(index, None)
 
-    def create_table(
-        self, tbl_name: str, *tbl_columns: str, temporary: bool = False
-    ) -> None:
-        """Creates datatable in the database using 'tbl_name' and 'tbl_columns'
-        :param tbl_name: name of a table to create
-        :param tbl_columns: str, list of column names
-        :param temporary: bool - if true, will create temporary table
-        :return:
-        """
-        temp = "TEMP" if temporary else ""
-        tbl_name, *tbl_columns = clean_names(tbl_name, *tbl_columns)
+    def set_data_tbl_columns(self, *main_cols, extra_cols: list | None = None):
+        extra_cols = extra_cols or []
+        self._data_tbl_columns = clean_names(*main_cols, *extra_cols)
+        self._extra_columns = self.data_tbl_columns[-len(extra_cols) :]
 
-        query = (
-            f"CREATE {temp} TABLE IF NOT EXISTS {tbl_name} ({', '.join(tbl_columns)});"
-        )
+    # ---------------------------------------------------------
+    # init logic
+    # ---------------------------------------------------------
+
+    def _init_base(self):
+        cur = self.db_con.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=OFF")
+        cur.execute("PRAGMA temp_store=MEMORY")
+        cur.execute("PRAGMA cache_size=-100000")
+
+        cur.close()
+
+    def _validate_required(self) -> None:
+        for name in self.REQUIRED_FIELDS:
+            if not getattr(self, name):
+                raise WrongDataSettings(f"{name} not set")
+
+    # ---------------------------------------------------------
+    # Base SQL functions
+    # ---------------------------------------------------------
+
+    def create_table(
+        self,
+        tbl_name: str,
+        *tbl_columns: str,
+        temporary: bool = False,
+        **typed_columns: str,
+    ) -> None:
+        """
+        Creates table in the database.
+
+        Args:
+            tbl_name: table name
+            *tbl_columns: column names (default type TEXT)
+            temporary: create TEMP table if True
+            **typed_columns: column_name=TYPE
+        """
+
+        # -------------------------
+        # validate and clean names
+        # -------------------------
+        all_columns = list(tbl_columns) + list(typed_columns.keys())
+        tbl_name, *all_columns = clean_names(tbl_name, *all_columns)
+
+        # восстановим после clean_names
+        plain_cols = all_columns[: len(tbl_columns)]
+        typed_cols_keys = all_columns[len(tbl_columns) :]
+
+        # -------------------------
+        # validate types
+        # -------------------------
+        typed_cols = {}
+        for key, val in zip(typed_cols_keys, typed_columns.values(), strict=True):
+            dtype = val.upper()
+            if dtype not in VALID_COLUMN_DTYPES:
+                raise WrongDataSettings(
+                    f"Invalid dtype '{val}' for column '{key}'. "
+                    f"Allowed: {VALID_COLUMN_DTYPES}"
+                )
+            typed_cols[key] = dtype
+
+        # -------------------------
+        # build columns SQL
+        # -------------------------
+        columns_sql = []
+
+        # обычные колонки → TEXT по умолчанию
+        for col in plain_cols:
+            columns_sql.append(f"{col} TEXT")
+
+        # колонки с типами
+        for col, dtype in typed_cols.items():
+            columns_sql.append(f"{col} {dtype}")
+
+        with_cols = ", ".join(columns_sql) if columns_sql else ""
+        temp = "TEMP" if temporary else ""
+
+        query = f"CREATE {temp} TABLE IF NOT EXISTS {tbl_name} ({with_cols});"
 
         self.perform_query(query)
         logger.debug(f"Table '{tbl_name}' created successfully")
-
-    def update_index_from_data(self):
-        if self.index_column:
-            insert_columns = select_columns = (
-                f"{', '.join(self.search_columns)}, {self.index_column}"
-            )
-            if self.date_column:
-                insert_columns += f", {self.date_column}"
-                select_columns += f", MAX({self.date_column})"
-            query = (
-                f"INSERT INTO {self._index_tbl_name} ({insert_columns}) "
-                f"SELECT {select_columns} "
-                f"FROM {self.data_tbl_name} "
-                f"GROUP BY {self.index_column};"
-            )
-            # print(query)
-            self.perform_query(query)
-            logger.debug(f"Table '{self._index_tbl_name}' updated successfully")
 
     def perform_query(self, query: str, params: tuple | None = None):
         try:
@@ -223,27 +261,15 @@ class DBWorker:
             )
         map(self.drop_trigger, tr_names)
 
-    # def tbl_exist(self, name_to_check: str) -> bool:
-    #     """
-    #     Check whether table with the name 'name_to_check' already in database.
-    #     To avoid creation of a table with a same name as existing.
-    #     :param name_to_check: str, the name to be checked in database
-    #     :return: bool, False or True
-    #     """
-    #     # query returns 1 if table exists and 0 if not
-    #     query = (
-    #         f"SELECT EXISTS (SELECT 1 FROM sqlite_master "
-    #         f"WHERE type = 'table' AND name = '{name_to_check}')"
-    #     )
-    #     # fetchone() returns tuple i.e. (1,) or (0,)
-    #     exist = bool(self.perform_query(query).fetchone()[0])
-    #     return exist
-
     def tbl_exists(self, name: str) -> bool:
         sql = """
-              SELECT name FROM sqlite_master  WHERE name = ?
+              SELECT name
+              FROM sqlite_master
+              WHERE name = ?
               UNION
-              SELECT name FROM sqlite_temp_master WHERE name = ?
+              SELECT name
+              FROM sqlite_temp_master
+              WHERE name = ?
               """
         rows = self.db_con.execute(sql, (name, name)).fetchall()
         return len(rows) > 0
@@ -271,24 +297,153 @@ class DBWorker:
         for c_name, c_type in col_params.items():
             self.add_column(tbl_name, c_name, c_type)
 
-    def link_search_table(
-        self,
-        tbl_name: str,
-        *search_columns: str | list[str],
-        suffix: str | None = "_fts",
-    ):
+    def get_table_sample(self, tbl_name: str, limit: int = 2):
+        """
+        :param tbl_name:
+        :param limit:
+        :return:
+        """
+        query = f"SELECT * FROM {tbl_name} LIMIT {limit}"
+        for tbl_row in self.perform_query(query):
+            print(f"These are sample rows for {tbl_name}", flush=True)
+            print(tbl_row, flush=True)
+
+    def get_table_columns(self, tbl_name: str) -> list:
+        """
+        Get names of table columns
+        :param tbl_name: str, table name
+        :return: list of table column names
+        """
+        sql = """
+              SELECT name
+              FROM pragma_table_info(?)
+              ORDER BY cid;
+              """
+        cursor = self.db_con.execute(sql, (tbl_name,))
+        return [row[0] for row in cursor.fetchall()]
+
+    # ---------------------------------------------------------
+    # Index table
+    # ---------------------------------------------------------
+
+    def _create_index_table(self):
+        if self.index_column:
+            self._index_tbl_name = self.data_tbl_name + "_distinct"
+            index_tbl_column_names = list(
+                (*self.search_columns, *self.extra_columns, self.index_column)
+            )
+            if self.date_column:
+                index_tbl_column_names.append(self.date_column)
+            # create index base
+            self.create_table(
+                self._index_tbl_name,
+                *index_tbl_column_names,
+                temporary=self.use_temp_tables,
+            )
+
+    def _create_index(self, table_name: str, *columns: str, unique_index: bool = False):
+        unique = "UNIQUE" if unique_index else ""
+        sql = f"""
+            CREATE {unique} INDEX IF NOT EXISTS {table_name}_{'_'.join(columns)}_index
+            ON {table_name}({', '.join(columns)});
+            """
+        self.perform_query(sql)
+
+    def create_table_with_index(self):
+
+        self._validate_required()
+        # create empty datatable
+        self.create_table(self.data_tbl_name, *self.data_tbl_columns)
+        self._create_index_table()
+        self._create_index(self.data_tbl_name, self.index_column)
+        self._create_index(self._index_tbl_name, self.index_column)
+
+    def update_index_from_data(self):
+        if self.index_column:
+            insert_columns = select_columns = (
+                f"{', '.join(self.search_columns)}, {self.index_column}"
+            )
+            if self.date_column:
+                insert_columns += f", {self.date_column}"
+                select_columns += f", MAX({self.date_column})"
+            query = (
+                f"INSERT INTO {self._index_tbl_name} ({insert_columns}) "
+                f"SELECT {select_columns} "
+                f"FROM {self.data_tbl_name} "
+                f"GROUP BY {self.index_column};"
+            )
+            # print(query)
+            self.perform_query(query)
+            logger.debug(f"Table '{self._index_tbl_name}' updated successfully")
+
+    def sync_with_data_table(self):
+        if self._index_tbl_name:
+            self._sync_tables(
+                self.data_tbl_name,
+                self._index_tbl_name,
+                self.index_column,
+                *self.extra_columns,
+            )
+
+    def _sync_tables(self, target_tbl, source_tbl, index_col, *cols):
+
+        cols_update = ", ".join(f"{c}=s.{c}" for c in cols if c != index_col)
+
+        update_sql = f"""
+        UPDATE {target_tbl} AS t
+        SET {cols_update}
+        FROM {source_tbl} AS s
+        WHERE t.{index_col} = s.{index_col};
+        """
+
+        self.perform_query(update_sql)
+
+        insert_cols = ", ".join(cols)
+
+        insert_sql = f"""
+        INSERT INTO {target_tbl} ({insert_cols})
+        SELECT {insert_cols}
+        FROM {source_tbl} AS s
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM {target_tbl} AS t
+            WHERE t.{index_col}=s.{index_col}
+        );
+        """
+
+        self.perform_query(insert_sql)
+
+        delete_sql = f"""
+        DELETE FROM {target_tbl} AS t
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM {source_tbl} AS s
+            WHERE s.{index_col}=t.{index_col}
+        );
+        """
+
+        self.perform_query(delete_sql)
+        logger.debug(f"Sync {target_tbl} with {source_tbl} on {index_col}")
+
+    # ---------------------------------------------------------
+    # FTS search
+    # ---------------------------------------------------------
+    def link_search_table(self, suffix: str | None = "_fts"):
         """
         Creates Virtual SQLight3 FTS 5 table using provided datatable as a content table.
         And setting triggers on update, delete and insert actions to keep it synchronised to the datatable.
         For mor details please check: https://www.sqlite.org/fts5.html#external_content_tables
-        :param tbl_name: str, name of existing data table
-        :param search_columns: str, names of columns in datatable
         to be used as a content for a Virtual table FTS (text-search)
         :param suffix: str, define the name of a search table as
         {data_table_name}{suffix} it is recommended to keep default
-        :return: bool, True if operation succeeded
+        :return:
         """
-        search_tbl = tbl_name + suffix
+
+        tbl_name = self._index_tbl_name or self.data_tbl_name
+        self._fts_table_name = search_tbl = tbl_name + suffix
+
+        search_columns = self.search_columns.copy()
+
         validate_names(search_tbl, *search_columns)
         # ensure that there are no table with the same name
         query = (
@@ -348,53 +503,9 @@ class DBWorker:
 
         logger.debug(f"Search triggers were successfully created for '{search_tbl}' ")
 
-    def create_search_table(self):
-        """
-        creates datatable in the database
-            https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_sql.html
-        :return: count of data rows loaded
-        """
-        # check we have all required for building the table
-        self._validate_required()
-
-        # create empty datatable
-        self.create_table(self.data_tbl_name, *self.data_tbl_columns)
-
-        self._create_index_table()
-        # link base to FTS search table
-        self.link_search_table(
-            self._index_tbl_name or self.data_tbl_name, *self.search_columns
-        )
-        logger.debug(f"Datatable: {self.data_tbl_name} successfully created")
-
-    def _create_index_table(self):
-        if self.index_column:
-            self._index_tbl_name = self.data_tbl_name + "_distinct"
-            index_tbl_column_names = list(
-                (*self.search_columns, *self.extra_columns, self.index_column)
-            )
-            if self.date_column:
-                index_tbl_column_names.append(self.date_column)
-            # create index base
-            self.create_table(
-                self._index_tbl_name, *index_tbl_column_names, temporary=self.use_temp_tables
-            )
-
-    def _create_index(self, table_name: str, *columns: str, unique_index: bool = False):
-        unique = "UNIQUE" if unique_index else ""
-        sql = f"""
-            CREATE {unique} INDEX IF NOT EXISTS {table_name}_{'_'.join(columns)}_index
-            ON {table_name}({', '.join(columns)});
-            """
-        self.perform_query(sql)
-
-    def create_table_with_index(self):
-        self._validate_required()
-        # create empty datatable
-        self.create_table(self.data_tbl_name, *self.data_tbl_columns)
-        self._create_index_table()
-        self._create_index(self.data_tbl_name, self.index_column)
-        self._create_index(self._index_tbl_name, self.index_column)
+    # ---------------------------------------------------------
+    # Data import
+    # ---------------------------------------------------------
 
     def data_chunk_to_sql(
         self, chunk, data_table, sql_loader_settings: dict[str, Any] = None
@@ -413,43 +524,92 @@ class DBWorker:
         )  # load data
         return chunk.shape[0]
 
-    def get_table_sample(self, tbl_name: str, limit: int = 2):
-        """
-        :param tbl_name:
-        :param limit:
-        :return:
-        """
-        query = f"SELECT * FROM {tbl_name} LIMIT {limit}"
-        for tbl_row in self.perform_query(query):
-            print(f"These are sample rows for {tbl_name}", flush=True)
-            print(tbl_row, flush=True)
+    # ---------------------------------------------------------
+    # Mapping - tables
+    # ---------------------------------------------------------
+    def create_rules_matches(self):
+        mapping_index = MappingColumns.mapping_index
+        data_rowid = MappingColumns.data_rowid
+        matches_table_columns = {
+            MappingColumns.data_rowid: "INTEGER",
+            MappingColumns.mapping_index: "INTEGER",
+        }
+        self.drop_table(self._full_matches_table)
+        self.create_table(
+            self._full_matches_table,
+            temporary=self.use_temp_tables,
+            **matches_table_columns,
+        )
+        self._create_index(self._full_matches_table, data_rowid)
+        self._create_index(self._full_matches_table, mapping_index)
 
-    def get_table_columns(self, tbl_name: str) -> list:
-        """
-        Get names of table columns
-        :param tbl_name: str, table name
-        :return: list of table column names
-        """
-        sql = """
-              SELECT name
-              FROM pragma_table_info(?)
-              ORDER BY cid; 
-              """
-        cursor = self.db_con.execute(sql, (tbl_name,))
-        return [row[0] for row in cursor.fetchall()]
+    def insert_matches_from_fts(self, mapping_table: str):
+        index_col = MappingColumns.mapping_index
+        data_rowid_col = MappingColumns.data_rowid
+        pattern_col = MappingColumns.pattern
+        sql = f"""
+                INSERT INTO {self._full_matches_table} ({data_rowid_col}, {index_col})
+                SELECT {self._fts_table_name}.rowid, mt.{index_col}
+                FROM {self._fts_table_name}
+                JOIN {mapping_table} AS mt
+                ON {self._fts_table_name} MATCH mt.{pattern_col}
+                """
 
-    def build_non_mapped(self) -> list[sqlite3.Row] | None:
+        self.perform_query(sql)
+
+        # self.drop_table(mapping_table)
+
+    def insert_matches(self, mapping_table: str):
+
+        column_name_col = MappingColumns.column_name
+        index_col = MappingColumns.mapping_index
+        data_rowid_col = MappingColumns.data_rowid
+        pattern_col = MappingColumns.pattern
+        matches_table = self._full_matches_table
+
+        union_queries = []
+
+        for col in self.search_columns:
+            union_queries.append(f"""            
+                SELECT DISTINCT 
+                    data.rowid AS {data_rowid_col},
+                    rules.{index_col}                                       
+                FROM {self.target_table} AS data
+                JOIN {mapping_table} AS rules
+                ON rules.{column_name_col} = '{col}'
+                AND rules.{pattern_col} IS NOT NULL
+                AND data.{col} LIKE rules.{pattern_col} COLLATE NOCASE
+                """)
+
+        rule_match_query = "\nUNION ALL\n".join(union_queries)
+
+        sql = f""" 
+        INSERT INTO {matches_table} ({data_rowid_col}, {index_col})
+         {rule_match_query}
+         """
+        self.perform_query(sql)
+        self.drop_table(mapping_table)
+
+    def _build_joined_matches(self, mapping_table):
+
+        self.perform_query(f"DROP TABLE IF EXISTS {self._joined_matches_table}")
+
+        tmp = "TEMP" if self.use_temp_tables else ""
+        sql = f"""
+        CREATE {tmp} TABLE {self._joined_matches_table} AS 
+        SELECT
+            rm.data_rowid,
+            r.*
+        FROM {self._full_matches_table} rm
+        JOIN {mapping_table} r
+            ON r.{MappingColumns.mapping_index} = rm.{MappingColumns.mapping_index}        
         """
-        Get rows with NULL values for defined columns
-        """
-        select_cols = ", ".join(self.search_columns + self.extra_columns)
-        query = f"""
-            CREATE TEMP TABLE {self.non_mapped_table} AS 
-                SELECT DISTINCT {select_cols} 
-                FROM {self.target_table} 
-                WHERE   {' | '.join(self.extra_columns)} IS NULL                
-            """
-        self.perform_query(query)
+
+        self.perform_query(sql)
+
+    # ---------------------------------------------------------
+    # Mapping processing
+    # ---------------------------------------------------------
 
     def apply_mapping(
         self, mapping_table: str, action_type: str, extra_cols: list, separator=", "
@@ -472,72 +632,6 @@ class DBWorker:
             case _:
                 pass
 
-    def sync_with_data_table(self):
-        if self._index_tbl_name:
-            self._sync_tables(
-                self.data_tbl_name,
-                self._index_tbl_name,
-                self.index_column,
-                *self.extra_columns,
-            )
-
-    def _sync_tables(self, target_tbl, source_tbl, index_col, *cols):
-
-        cols_update = ", ".join(f"{c}=s.{c}" for c in cols if c != index_col)
-
-        update_sql = f"""
-        UPDATE {target_tbl} AS t
-        SET {cols_update}
-        FROM {source_tbl} AS s
-        WHERE t.{index_col} = s.{index_col};
-        """
-
-        self.perform_query(update_sql)
-
-        insert_cols = ", ".join(cols)
-
-        insert_sql = f"""
-        INSERT INTO {target_tbl} ({insert_cols})
-        SELECT {insert_cols}
-        FROM {source_tbl} AS s
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM {target_tbl} AS t
-            WHERE t.{index_col}=s.{index_col}
-        );
-        """
-
-        self.perform_query(insert_sql)
-
-        delete_sql = f"""
-        DELETE FROM {target_tbl} AS t
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM {source_tbl} AS s
-            WHERE s.{index_col}=t.{index_col}
-        );
-        """
-
-        self.perform_query(delete_sql)
-        logger.debug(f"Sync {target_tbl} with {source_tbl} on {index_col}")
-
-    def _build_joined_matches(self, mapping_table):
-
-        self.perform_query(f"DROP TABLE IF EXISTS {self._joined_matches_table}")
-
-        tmp = "TEMP" if self.use_temp_tables else ""
-        sql = f"""
-        CREATE {tmp} TABLE {self._joined_matches_table} AS 
-        SELECT
-            rm.data_rowid,
-            r.*
-        FROM {self._full_matches_table} rm
-        JOIN {mapping_table} r
-            ON r.{MappingColumns.mapping_index} = rm.{MappingColumns.mapping_index}        
-        """
-
-        self.perform_query(sql)
-
     def _apply_delete(self) -> None:
 
         sql = f"""
@@ -554,8 +648,8 @@ class DBWorker:
         self.perform_query(sql)
 
     def _apply_replace(self, column_names: list):
-
-        extra_cols = [col for col in self.extra_columns if col in column_names]
+        extra_cols_set = set(self.extra_columns)
+        extra_cols = [col for col in column_names if col in extra_cols_set]
 
         select_cols = ",\n".join(f"{col}" for col in extra_cols)
         update_clause = ",\n".join(f"{col} = rr.{col}" for col in extra_cols)
@@ -639,44 +733,13 @@ class DBWorker:
 
             self.perform_query(update_sql)
 
-    def create_rules_matches(self, mapping_table: str):
-
-        column_name_col = MappingColumns.column_name
-        pattern_col = MappingColumns.pattern
-        index_col = MappingColumns.mapping_index
-        matches_table = self._full_matches_table
-
-        union_queries = []
-
-        for col in self.search_columns:
-            union_queries.append(f"""
-                SELECT DISTINCT 
-                    data.rowid AS data_rowid,
-                    rules.{index_col}                                       
-                FROM {self.target_table} AS data
-                JOIN {mapping_table} AS rules
-                ON rules.{column_name_col} = '{col}'
-                AND rules.{pattern_col} IS NOT NULL
-                AND UPPER(data.{col}) LIKE rules.{pattern_col}
-                """)
-
-        rule_match_query = "\nUNION ALL\n".join(union_queries)
-
-        self.drop_table(matches_table)
-
-        sql = f"""
-         CREATE TEMP TABLE {matches_table} AS
-         {rule_match_query}
-         """
-        self.perform_query(sql)
-
-        self._create_index(matches_table, "data_rowid")
-        self._create_index(matches_table, index_col)
-        self.drop_table(mapping_table)
-
     def _ensure_tags_table(self):
         self.create_table(
-            "data_table_tags", "rowid", "column_name", "value", temporary=self.use_temp_tables
+            "data_table_tags",
+            "rowid",
+            "column_name",
+            "value",
+            temporary=self.use_temp_tables,
         )
 
         self._create_index(
@@ -684,57 +747,22 @@ class DBWorker:
         )
         self._create_index("data_table_tags", "rowid", "column_name")
 
-
-
-
-    def _create_table_from_df(self, df: pl.DataFrame, table: str):
-        def pl_to_sqlite(dtype):
-            if dtype == pl.Int64:
-                return "INTEGER"
-            if dtype == pl.Float64:
-                return "REAL"
-            return "TEXT"
-
-        cols = [
-            f"{name} {pl_to_sqlite(dtype)}"
-            for name, dtype in zip(df.columns, df.dtypes)
-        ]
-
-        schema = ", ".join(cols)
-
-        self.db_con.execute(f"CREATE TABLE {table} ({schema})")
-
-    def polars_to_sqlite(self,
-            df: pl.DataFrame,
-            table: str,
-            columns: list[str],
-            if_exists: str = "append",  # append | replace
-    ):
+    def build_non_mapped(self) -> list[sqlite3.Row] | None:
         """
-        Write Polars DataFrame to SQLite.
-
-        Args:
-            df: Polars DataFrame
-            table: table name
-            columns: column names
-            if_exists:
-                - append: insert into existing table
-                - replace: drop + recreate table
-                - truncate: delete data, keep schema
+        Get rows with NULL values for defined columns
         """
-
-        if if_exists == "replace":
-            self.drop_table(table)
-            self._create_table_from_df(df, table)
-
-
-        placeholders = ",".join(["?"] * len(df.columns))
-        query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
-
+        select_cols = ", ".join(self.search_columns + self.extra_columns)
+        query = f"""
+            CREATE TEMP TABLE {self.non_mapped_table} AS 
+                SELECT DISTINCT {select_cols} 
+                FROM {self.target_table} 
+                WHERE   {' | '.join(self.extra_columns)} IS NULL                
+            """
         self.perform_query(query)
-        self.db_con.cursor().executemany(query, df.iter_rows())
-        self.db_con.commit()
 
+    # ---------------------------------------------------------
+    # Finalization
+    # ---------------------------------------------------------
 
     def _delete_base_files(self):
         for f in self.db_file.parent.glob(self.db_file.name + "*"):
@@ -749,8 +777,8 @@ class DBWorker:
         # self.drop_tables(self.data_tbl_name, self.target_table)
         try:
             self.db_con.execute("PRAGMA wal_checkpoint(FULL)")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Cannot clean up temporary files: {e}")
 
         self.db_con.close()
         self.db_adb_con.close()

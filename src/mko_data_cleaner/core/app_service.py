@@ -71,6 +71,25 @@ class AppService:
                 self.resolver.ensure_file_parent(file_path)
                 handler["filename"] = file_path
 
+    @staticmethod
+    def _import_data(db_worker, csv_worker):
+        rows_count = 0
+        col_count = len(csv_worker.source_headers)
+
+        for chunk in csv_worker.get_data_chunks(db_worker.data_tbl_columns[:col_count]):
+            rows_count += chunk.write_database(
+                table_name=db_worker.data_tbl_name,
+                connection=db_worker.db_adb_con,
+                engine="adbc",
+                if_table_exists="append",
+            )
+            logger.debug(f"write_database → {rows_count:,} rows")
+        db_worker.db_adb_con.commit()
+
+        logger.info(f"{rows_count:,} rows were loaded to data table")
+
+        db_worker.update_index_from_data()
+
     def run_report(self, data_path: str | Path):
         start_time = datetime.now().replace(microsecond=0)
         print(
@@ -91,10 +110,10 @@ class AppService:
             export_settings=self.app_config.export_settings.to_csv.model_dump(),
         )
 
-        # get dictionary params
-        md = csv_worker.get_dictionary()
+        # reading mapping params
+        df = csv_worker.get_dictionary()
         mapping_dict = MappingDict(
-            data=md, action_col_indexes=self.app_config.dict_file_settings.col_indexes
+            data=df, action_col_indexes=self.app_config.dict_file_settings.col_indexes
         )
 
         # DB settings
@@ -108,61 +127,68 @@ class AppService:
             date_column=date_column,
         ) as db_worker:
 
-            # source columns and columns from dictionary
+            # setting and clearing up column names before import
             db_worker.set_data_tbl_columns(
                 *csv_worker.source_headers, extra_cols=mapping_dict.extra_col_names
             )
 
+            # adjusting mapping in accordance with cleaned column names
+            # prepare search patterns
             mapping_dict.build_mapping(
                 *db_worker.data_tbl_columns, extra_col_names=db_worker.extra_columns
             )
 
-            # # create search table using indexes from dictionary
-            db_worker.search_columns = mapping_dict.get_search_columns()
+            # creating index and search tables
+            db_worker.search_columns = mapping_dict.search_columns
             db_worker.create_table_with_index()
+            db_worker.create_rules_matches()
+
+            # creating fts search table with triggers if there are
+            # fts patterns in mapping
+            if not mapping_dict.fts_data.is_empty():
+                db_worker.link_search_table()
 
             # loading data to database
-            rows_count = 0
-            col_count = len(csv_worker.source_headers)
+            self._import_data(db_worker, csv_worker)
 
-            for chunk in csv_worker.get_data_chunks(
-                db_worker.data_tbl_columns[:col_count]
-            ):
-                rows_count += chunk.write_database(
-                    table_name=db_worker.data_tbl_name,
+            # importing fts rules to db
+            if not mapping_dict.fts_data.is_empty():
+                mapping_dict.fts_data.select(
+                    [
+                        MappingColumns.mapping_index,
+                        MappingColumns.pattern,
+                    ]
+                ).write_database(
+                    table_name="fts_temp_tbl",
                     connection=db_worker.db_adb_con,
                     engine="adbc",
-                    if_table_exists="append",
+                    if_table_exists="replace",
                 )
-                logger.debug(f"write_database → {rows_count:,} rows")
-            db_worker.db_adb_con.commit()
+                db_worker.insert_matches_from_fts("fts_temp_tbl")
+                db_worker.db_adb_con.commit()
 
-            logger.info(f"{rows_count:,} rows were loaded to data table")
-
-            db_worker.update_index_from_data()
-
-            # importing full dictionary to db and
-            # creating mapping table with indexes
-            mapping_dict.data.select(
-                [
-                    MappingColumns.mapping_index,
-                    MappingColumns.column_name,
-                    MappingColumns.pattern,
-                ]
-            ).write_database(
-                table_name="temp_tbl",
-                connection=db_worker.db_adb_con,
-                engine="adbc",
-                if_table_exists="replace",
-            )
-            db_worker.db_adb_con.commit()
-            db_worker.create_rules_matches(mapping_table="temp_tbl")
+            if not mapping_dict.like_data.is_empty():
+                # importing full dictionary to db and
+                # creating mapping table with indexes
+                mapping_dict.like_data.select(
+                    [
+                        MappingColumns.mapping_index,
+                        MappingColumns.column_name,
+                        MappingColumns.pattern,
+                    ]
+                ).write_database(
+                    table_name="temp_tbl",
+                    connection=db_worker.db_adb_con,
+                    engine="adbc",
+                    if_table_exists="replace",
+                )
+                db_worker.db_adb_con.commit()
+                db_worker.insert_matches(mapping_table="temp_tbl")
 
             rules_count_total = mapping_dict.data.height
             rules_count = 0
 
             for action, data in mapping_dict.generate_rules_blocks():
-
                 rules_count += data.height
                 progress_bar(
                     message="Applying rules",
@@ -198,8 +224,11 @@ class AppService:
 
             # synchronizing and exporting
 
-            print("Synchronizing the index table with the data table is in progress. "
-                  "Please be patient, this may take some time.", flush=True)
+            print(
+                "Synchronizing the index table with the data table is in progress. "
+                "Please be patient, this may take some time.",
+                flush=True,
+            )
             db_worker.sync_with_data_table()
 
             csv_worker.export_sql_to_csv(

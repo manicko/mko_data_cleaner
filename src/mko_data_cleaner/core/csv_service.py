@@ -8,8 +8,9 @@ from time import strftime
 
 import polars as pl
 
-from mko_data_cleaner.core.utils import list_files_in_directory, progress_bar
 from mko_data_cleaner.core.errors import WrongDataSettings
+from mko_data_cleaner.core.utils import list_files_in_directory, progress_bar
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +49,7 @@ class CSVWorker:
         self.data_path = Path(data_path)
 
         self.data_files: list[Path] = []
-        self.sample_data_file:Path | None = None
+        self.sample_data_file: Path | None = None
         self.source_headers: list[str] = []
 
         self._set_files_params()
@@ -67,10 +68,11 @@ class CSVWorker:
             self.sample_data_file = self.data_files[0]
             self.source_headers = self.get_csv_headers(self.sample_data_file)
         else:
-            raise WrongDataSettings(f"Please check settings. "
-                                    f"No files with extension: '{ext}' "
-                                    f"found in: '{self.data_path}'. ")
-
+            raise WrongDataSettings(
+                f"Please check settings. "
+                f"No files with extension: '{ext}' "
+                f"found in: '{self.data_path}'. "
+            )
 
     def get_csv_headers(self, file: str | Path) -> list[str]:
         """Read CSV headers using Polars."""

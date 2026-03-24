@@ -96,8 +96,9 @@ class PolarsReadCSV(BaseModel):
     skip_rows: NonNegativeInt | None = 0
     decimal_comma: bool = True
     has_header: bool = True
-    ignore_errors: bool = True
+    ignore_errors: bool = False
     rechunk: bool = False
+    infer_schema_length: bool = False
 
 
 # ---------------Dictionary
@@ -112,6 +113,7 @@ class MatchType(StrEnum):
     PARTIAL_MATCH = "p"
     ENDS_WITH = "e"
     STARTS_WITH = "s"
+    FTS = "fts"
 
 
 class MappingColumns(StrEnum):
@@ -125,6 +127,7 @@ class MappingColumns(StrEnum):
     mapping_index = "mapping_index"
     column_name = "column_name"  # name based on search column with index
     pattern = "pattern"
+    data_rowid = "data_rowid"
 
 
 class DictColumnsIndexes(BaseModel):
@@ -140,6 +143,7 @@ class DataDict(BaseModel):
     extension: DataFileExtension
     col_indexes: DictColumnsIndexes = DictColumnsIndexes()
     add_separator: str = ", "
+    fts_separator: str = "|"
 
 
 class ReadCSV(BaseModel):

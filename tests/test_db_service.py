@@ -168,10 +168,10 @@ def test_create_search_table(db_worker):
     """
 
     db_worker.set_data_tbl_columns("id", "col1", "col2", extra_cols=["extra_tag"])
-
+    db_worker.index_column = 'id'
     db_worker.search_columns = ["col1", "col2"]
-
-    db_worker.create_search_table()
+    db_worker.create_table_with_index()
+    db_worker.link_search_table()
 
     # 1️ основная таблица
     assert db_worker.tbl_exists(db_worker.data_tbl_name)

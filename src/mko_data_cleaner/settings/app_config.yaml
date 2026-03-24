@@ -13,6 +13,7 @@
   'dict_file_settings': {
     'extension': 'gz',
     'add_separator': ', ',
+    'fts_separator': '|',
     'col_indexes': { # columns' indexes in the mapping dictionary containing settings
       'action': 0,  # update or delete setting
       'match': 1,
@@ -31,13 +32,14 @@
       "decimal_comma": True,
       "skip_rows": 0,
       "has_header": True,
-      "ignore_errors": True,
+      "ignore_errors": False,
+      "infer_schema_length":False,
       "rechunk": False
     }
   },
   'export_settings': {
     "to_csv": {
-      "chunk_size": 10000,
+      "chunk_size": 1000000,
       "include_bom": True,
       "separator": ";",
       "decimal_comma": True,
