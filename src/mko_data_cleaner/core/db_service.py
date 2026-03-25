@@ -452,9 +452,9 @@ class DBWorker:
         )
         self.perform_query(query)
         logger.debug(f"Search table '{search_tbl}' was successfully created")
-        self.create_triggers(tbl_name, search_tbl, suffix, search_columns)
+        self.create_triggers(tbl_name, search_tbl, search_columns)
 
-    def create_triggers(self, tbl_name, search_tbl, suffix, search_columns):
+    def create_triggers(self, tbl_name, search_tbl, search_columns):
         columns = ",".join(search_columns)
         new_columns = ",".join(f"new.{c}" for c in search_columns)
         old_columns = ",".join(f"old.{c}" for c in search_columns)
@@ -462,44 +462,39 @@ class DBWorker:
         #  Triggers to keep the Search table up to date.
 
         query = {
-            "insert": """
-                      CREATE TRIGGER IF NOT EXISTS {table}_insert AFTER INSERT ON {table}
-                      BEGIN
-                      INSERT INTO {search_tbl} (rowid, {column_list})
-                      VALUES (new.rowid, {new_columns});
-                      END;
-                      """,
-            "delete": """
-                      CREATE TRIGGER IF NOT EXISTS {table}_delete AFTER
-                      DELETE
-                      ON {table}
-                      BEGIN
-                      INSERT INTO {search_tbl} ({search_tbl}, rowid, {column_list})
-                      VALUES ('delete', old.rowid, {old_columns});
-                      END;
-                      """,
-            "update": """
-                      CREATE TRIGGER IF NOT EXISTS {table}_update AFTER
-                      UPDATE ON {table}
-                      BEGIN
-                      INSERT INTO {search_tbl} ({search_tbl}, rowid, {column_list})
-                      VALUES ('delete', old.rowid, {old_columns});
-                      INSERT INTO {search_tbl} (rowid, {column_list})
-                      VALUES (new.rowid, {new_columns});
-                      END;
-                      """,
+            "insert": f"""
+                    CREATE TRIGGER IF NOT EXISTS {tbl_name}_insert 
+                    AFTER INSERT ON {tbl_name} 
+                    BEGIN 
+                        INSERT INTO {search_tbl} (rowid, {columns})
+                        VALUES (new.rowid, {new_columns});
+                    END;
+            """,
+
+            "delete": f"""
+                    CREATE TRIGGER IF NOT EXISTS {tbl_name}_delete 
+                    AFTER DELETE ON {tbl_name}
+                    BEGIN 
+                        INSERT INTO {search_tbl} ({search_tbl}, rowid, {columns})
+                        VALUES ('delete', old.rowid, {old_columns});
+                    END;
+            """,
+
+            "update": f"""
+            CREATE TRIGGER IF NOT EXISTS {tbl_name}_update 
+            AFTER UPDATE ON {tbl_name} 
+            BEGIN 
+                INSERT INTO {search_tbl} ({search_tbl}, rowid, {columns})
+                VALUES ('delete', old.rowid, {old_columns});
+
+                INSERT INTO {search_tbl} (rowid, {columns})
+                VALUES (new.rowid, {new_columns});
+            END;
+            """,
         }
 
         for q_trigger in query.values():
-            q = q_trigger.format(
-                search_tbl=search_tbl,
-                table=tbl_name,
-                suffix=suffix,
-                column_list=columns,
-                new_columns=new_columns,
-                old_columns=old_columns,
-            )
-            self.perform_query(q)
+            self.perform_query(q_trigger)
 
         logger.debug(f"Search triggers were successfully created for '{search_tbl}' ")
 
