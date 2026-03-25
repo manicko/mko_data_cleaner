@@ -41,7 +41,7 @@ Homepage = "https://github.com/manicko/mko_data_cleaner"
 Issues = "https://github.com/manicko/mko_data_cleaner"
 
 [project.scripts]
-mko-get-mediascope = "mko_data_cleaner.app:app"
+mko-data-cleaner = "mko_data_cleaner.app:app"
 
 
 [tool.setuptools]

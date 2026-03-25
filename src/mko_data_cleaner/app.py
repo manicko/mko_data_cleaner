@@ -17,8 +17,8 @@ sys.stdout.reconfigure(line_buffering=True)
 
 console = Console()
 app = typer.Typer(
-    name="mko_get_mediascope_data",
-    help="Инструмент выгрузки данных из Mediascope (TV / TV_REG)",
+    name="mko-data-cleaner",
+    help="Инструмент для дополнительной очистки и подготовки массивов данных Mediascope (TV / TV_REG).",
     add_completion=True,
 )
 
@@ -38,7 +38,7 @@ def init(
 def run(
     report: Annotated[
         Path,
-        typer.Argument(exists=True, dir_okay=False, help="Путь к yaml-файлу задания"),
+        typer.Argument(exists=True, dir_okay=True, help="Путь к директории отчета"),
     ],
     verbose: bool = typer.Option(True, "--verbose", "-v"),
 ):
@@ -47,7 +47,7 @@ def run(
         console.print(f"[blue]▶ Запуск отчёта:[/blue] {report.name}")
 
     try:
-        app_service.process_data(report)
+        app_service.run_report(report)
         console.print("[green]✅ Отчёт успешно завершён[/green]")
 
     except Exception as e:
@@ -77,7 +77,7 @@ def process_data(report_path: str | Path) -> None:
     path = Path(report_path)
     if not path.exists():
         raise FileNotFoundError(f"Файл не найден: {path}")
-    app_service.process_data(path)
+    app_service.run_report(path)
 
 
 def initialize_settings(force: bool = False) -> Path:

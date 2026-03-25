@@ -39,7 +39,7 @@
   },
   'export_settings': {
     "to_csv": {
-      "chunk_size": 1000000,
+      "chunk_size": 100000,
       "include_bom": True,
       "separator": ";",
       "decimal_comma": True,

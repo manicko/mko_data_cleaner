@@ -16,8 +16,6 @@ def test_mapping_build(sample_dictionary, dict_indexes):
 
     mapping.build_mapping(*main_columns, extra_col_names=extra_columns)
 
-
-
     for df in (mapping.like_data, mapping.fts_data):
         if not df.is_empty():
             _cols = set(df.columns)
@@ -34,11 +32,11 @@ def test_mapping_build(sample_dictionary, dict_indexes):
         patterns = df[MappingColumns.pattern].to_list()
 
         assert "COCA-COLA" in patterns  # FULL_MATCH → без %
-        assert any(p and p.startswith("%") and p.endswith("%") for p in patterns)  # PARTIAL
+        assert any(
+            p and p.startswith("%") and p.endswith("%") for p in patterns
+        )  # PARTIAL
         assert any(p and p.endswith("%") for p in patterns)  # STARTS_WITH
         assert df[MappingColumns.column_name].is_in(main_columns).all()
-
-
 
 
 def test_pattern_generation(sample_dictionary, dict_indexes):
@@ -66,7 +64,6 @@ def test_pattern_generation(sample_dictionary, dict_indexes):
         # Проверка, что column_name правильно сопоставлен с search индексом
         assert "channelName" in column_names
         assert "brand" in column_names
-
 
         # Паттерны должны быть в UPPERCASE (как делает код)
         for p in patterns:
@@ -100,7 +97,11 @@ def test_build_search_like_pattern_real_cases(sample_dictionary, dict_indexes):
 
         # Полный матч
         full = df.filter(pl.col(MappingColumns.match) == MatchType.FULL_MATCH)
-        assert full[MappingColumns.pattern].to_list() == ["COCA-COLA", "УДАЛИТЬ", "СПОНСОР"]
+        assert full[MappingColumns.pattern].to_list() == [
+            "COCA-COLA",
+            "УДАЛИТЬ",
+            "СПОНСОР",
+        ]
 
         # Partial / Starts
         partial_starts = df.filter(
@@ -108,7 +109,9 @@ def test_build_search_like_pattern_real_cases(sample_dictionary, dict_indexes):
                 [MatchType.PARTIAL_MATCH, MatchType.STARTS_WITH]
             )
         )
-        assert any("%" in p for p in partial_starts[MappingColumns.pattern].to_list() if p)
+        assert any(
+            "%" in p for p in partial_starts[MappingColumns.pattern].to_list() if p
+        )
 
 
 def test_drop_empty_columns():
