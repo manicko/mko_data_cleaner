@@ -55,6 +55,9 @@ include = ["mko_data_cleaner", "mko_data_cleaner.*"]
 exclude = ["tests/.pytest_cache*"]
 namespaces = false
 
+[tool.setuptools.package-data]
+mko_data_cleaner = ["settings/*.yaml"]
+
 # Black configuration
 [tool.black]
 line-length = 88
