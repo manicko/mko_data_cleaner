@@ -8,9 +8,19 @@ import mko_data_cleaner.core.utils as utils
 from mko_data_cleaner.core.csv_service import CSVWorker
 from mko_data_cleaner.core.db_service import DBWorker
 from mko_data_cleaner.core.dict_service import MappingDict
-from mko_data_cleaner.core.errors import ConfigError, DataValidationError
+from mko_data_cleaner.core.errors import (
+    ConfigError,
+    DataValidationError,
+    SettingsNotInitializedError,
+)
 from mko_data_cleaner.core.models import DataSettings, LoggingSettings, MappingColumns
-from mko_data_cleaner.core.paths import APP_PATHS, AppPaths, PathResolver
+from mko_data_cleaner.core.paths import (
+    APP_DIR,
+    APP_NAME,
+    APP_PATHS,
+    AppPaths,
+    PathResolver,
+)
 from mko_data_cleaner.core.utils import progress_bar
 
 logger = logging.getLogger("app_service")
@@ -245,9 +255,53 @@ class AppService:
         )
 
 
-app_service = AppService(app_paths=APP_PATHS, resolver=PathResolver(APP_PATHS.user_dir))
+def build_app_paths(settings_dir: Path | None = None) -> AppPaths:
+    """Build :class:`AppPaths`, optionally overriding the user settings directory.
 
-logging.config.dictConfig(app_service.log_config.model_dump())
+    When ``settings_dir`` is ``None`` the platformdirs-backed :data:`APP_PATHS`
+    singleton is returned so that production behavior is unchanged. Otherwise a
+    new :class:`AppPaths` is constructed whose ``user_dir`` is ``settings_dir``,
+    which makes ``user_settings_dir`` resolve to ``settings_dir / "settings"``,
+    exactly mirroring :data:`APP_PATHS` for the default case.
+    """
+    if settings_dir is None:
+        return APP_PATHS
+    return AppPaths(app_dir=APP_DIR, app_name=APP_NAME, user_dir=Path(settings_dir))
+
+
+def _require_settings(app_paths: AppPaths) -> None:
+    """Validate that ``app_config.yaml`` and ``log_config.yaml`` exist.
+
+    Raises :class:`SettingsNotInitializedError` when either required settings
+    file is missing from the user settings directory.
+    """
+    missing: list[str] = []
+    if not app_paths.app_config.exists():
+        missing.append("app_config.yaml")
+    if not app_paths.log_config.exists():
+        missing.append("log_config.yaml")
+    if missing:
+        raise SettingsNotInitializedError(
+            user_settings_dir=app_paths.user_settings_dir,
+            missing_files=missing,
+        )
+
+
+def get_app_service(settings_dir: Path | None = None) -> AppService:
+    """Lazily construct :class:`AppService`, validating settings first.
+
+    This replaces the former module-level singleton so that
+    ``import mko_data_cleaner.app`` performs no filesystem side effects and
+    configures no logging. The :func:`logging.config.dictConfig` call that used
+    to run at import time is moved here, after the service has been constructed
+    and the settings gate has passed.
+    """
+    app_paths = build_app_paths(settings_dir)
+    _require_settings(app_paths)
+    service = AppService(app_paths=app_paths, resolver=PathResolver(app_paths.user_dir))
+    logging.config.dictConfig(service.log_config.model_dump())
+    return service
+
 
 if __name__ == "__main__":
-    app_service.run_report(r"data\mvideo")
+    get_app_service().run_report(r"data\mvideo")

@@ -9,7 +9,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from mko_data_cleaner.core.app_service import app_service
+from mko_data_cleaner.core.app_service import build_app_paths, get_app_service
 from mko_data_cleaner.core.init_service import init_project
 from mko_data_cleaner.core.utils import list_files_in_directory
 
@@ -41,13 +41,26 @@ def run(
         typer.Argument(exists=True, dir_okay=True, help="Путь к директории отчета"),
     ],
     verbose: bool = typer.Option(True, "--verbose", "-v"),
+    settings_dir: Annotated[
+        Path | None,
+        typer.Option(
+            exists=False,
+            file_okay=False,
+            dir_okay=True,
+            help="Директория пользовательских настроек (по умолчанию — системная)",
+        ),
+    ] = None,
 ):
     """Запустить выгрузку отчёта"""
     if verbose:
         console.print(f"[blue]▶ Запуск отчёта:[/blue] {report.name}")
 
+    # Сервис создаётся через фабрику; SettingsNotInitializedError пробрасывается
+    # наружу, если настройки не инициализированы.
+    service = get_app_service(settings_dir)
+
     try:
-        app_service.run_report(report)
+        service.run_report(report)
         console.print("[green]✅ Отчёт успешно завершён[/green]")
 
     except Exception as e:
@@ -56,32 +69,61 @@ def run(
 
 
 @app.command()
-def list_settings():
-    """Показать все доступные файлы заданий"""
-    reports_dir = app_service.app_paths.reports
+def list_settings(
+    settings_dir: Annotated[
+        Path | None,
+        typer.Option(
+            exists=False,
+            file_okay=False,
+            dir_okay=True,
+            help="Директория пользовательских настроек (по умолчанию — системная)",
+        ),
+    ] = None,
+):
+    """Показать файлы настроек в директории пользователя"""
+    app_paths = build_app_paths(settings_dir)
+    settings_path = app_paths.user_settings_dir
+
+    if not settings_path.is_dir():
+        console.print(
+            f"[yellow]⚠ Директория настроек не найдена: {settings_path}[/yellow]"
+        )
+        console.print("Запустите `mko-data-cleaner init` для создания настроек.")
+        return
+
     files = list_files_in_directory(
-        reports_dir, extensions=("yaml",), include_subfolders=True
+        settings_path, extensions=("yaml", "yml"), include_subfolders=False
     )
     if not files:
-        console.print("[yellow]Нет файлов в reports/[/yellow]")
+        console.print("[yellow]Нет файлов настроек[/yellow]")
         return
     for f in sorted(files):
-        console.print(f"• {f}")
+        console.print(f"• {f.name}")
 
 
 # Public API
-def process_data(report_path: str | Path) -> None:
+def process_data(report_path: str | Path, settings_dir: Path | None = None) -> None:
     """
-    Асинхронная версия для async-окружений (например, FastAPI).
+    Run the data-cleaning report for the given directory.
+
+    Synchronous entry point for non-CLI contexts (Jupyter / Airflow).
+    ``report_path`` must reference an existing directory (the report folder).
+    User settings are loaded lazily via the factory; if ``app_config.yaml`` or
+    ``log_config.yaml`` are missing, :class:`SettingsNotInitializedError`
+    (a subclass of ``FileNotFoundError``) is raised.
     """
     path = Path(report_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Файл не найден: {path}")
-    app_service.run_report(path)
+    if not path.is_dir():
+        raise FileNotFoundError(f"Directory not found: {path}")
+    get_app_service(settings_dir).run_report(path)
 
 
-def initialize_settings(force: bool = False) -> Path:
-    """Обёртка для Jupyter/Airflow"""
+def initialize_settings(force: bool = False, settings_dir: Path | None = None) -> Path:
+    """Initialize user settings with default templates (Jupyter/Airflow entry point)."""
+    # NOTE: ``settings_dir`` is accepted for API symmetry but is not yet
+    # forwarded to ``init_project``, which currently hardcodes
+    # ``APP_PATHS.user_settings_dir``. Threading ``settings_dir`` through
+    # ``init_project`` is completed in a later task (B4/T4).
     return init_project(force=force)
 
 
@@ -96,4 +138,5 @@ __all__ = [
     "run",
     "list_settings",
     "app",
+    "get_app_service",
 ]

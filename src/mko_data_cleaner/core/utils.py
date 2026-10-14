@@ -143,8 +143,10 @@ def yaml_to_dict(file: str | PathLike) -> dict[str, Any] | None:
             return yaml.safe_load(cfg) or {}
     except yaml.YAMLError as err:
         logger.error(err)
+        return {}
     except FileNotFoundError as err:
         logger.error(f"No such file or directory{file} {err}")
+        return {}
 
 
 def merge_dicts(dict1: dict[Any, Any], dict2: dict[Any, Any]) -> dict[Any, Any]:
