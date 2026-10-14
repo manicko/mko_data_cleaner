@@ -1,0 +1,144 @@
+# Subagents
+Max allowed parallel subagents = 2
+Only 1 implementor agent is allowed at a time.
+Do not launch agents in background.
+If stop or break prefer resume old session not launching new agent.
+
+# Project Commands
+
+**Env:** Windows 11 · `uv` (Python) · PostgreSQL 18 in Docker (`mko-bazuna-test` project, host port 5433)
+
+`make` (WSL/macOS/Linux) and `.\Makefile.ps1 <target>` (Win PowerShell) are the canonical entry points — each exports the correct `COMPOSE_PROJECT_NAME` (`mko-bazuna-dev` or `mko-bazuna-test`). The raw `docker compose` forms below are for one-off overrides.
+
+## Quick start
+
+**This environment is Windows 11** — `make` requires WSL or a GNU Make install.
+Use `.\Makefile.ps1` in PowerShell 7+:
+
+| Task | Command |
+|---|---|
+| Dev up (web :8000 + test DB :5433) | `.\Makefile.ps1 up` |
+| Fast test gate (skips `seed` tests) | `.\Makefile.ps1 test` |
+| Full suite (incl. `seed`) | `.\Makefile.ps1 test-all` |
+| Fresh test schema (after migration changes) | `.\Makefile.ps1 test-recreate` |
+| Stop test environment | `.\Makefile.ps1 test-down` |
+
+`head` and `tail` commands are not working in PowerShell 
+
+## Python (local, PowerShell)
+
+| Task | Command |
+|---|---|
+| Lint | `uv run ruff check <path>` |
+| Auto-fix (incl. import sorting, I001) | `uv run ruff check --fix <path>` |
+| Lint templates | `.\Makefile.ps1 lint-templates` (or `$env:PYTHONPATH='src/backend'; uv run djlint src/backend/templates/`) |
+| Typecheck | `uv run basedpyright <path>` |
+| Add dep | `uv add <pkg>` / `uv add --dev <pkg>` |
+
+> `ruff check --fix` handles import sorting (I001). `ruff format` only reformats (line wraps, quotes) and does **NOT** sort imports — `.\Makefile.ps1 format` runs `ruff check --fix src/`, not `ruff format`.
+
+## Tests (Docker only — never `uv run pytest` locally)
+
+Local `uv run pytest` fails: there is no DB on `localhost:5432`. Runs go through the `test` service of the `mko-bazuna-test` Compose project (PostgreSQL on host port 5433).
+
+**Alias (copy once):**
+```powershell
+$dc = 'docker compose --project-name mko-bazuna-test --env-file .env.test -f docker-compose.yml -f docker-compose.test.yml'
+```
+`--env-file .env.test` is **required** — compose interpolates `${POSTGRES_*?}` from it; omitting it aborts with "must be set".
+**Prefer `.\Makefile.ps1 <target>`** for canonical commands (it manages `--project-name` and `--env-file` for you). Raw `$dc` invocations are for one-off overrides only — ensure `$TestProject = "mko-bazuna-test"` is used (not `mko-bazuna-dev`).
+
+| Task | Command | When |
+|---|---|---|
+| Start DB | `$dc up -d db` | Once per session (persistent volume → `--reuse-db` caching) |
+| Fast gate | `$dc run --rm --env PYTEST_SKIP_MARKERS=seed test` | Default dev iteration (skips `seed`) |
+| Full suite | `$dc run --rm test` | Changes touch seeding/images |
+| Fresh schema | `$dc run --rm --env PYTEST_OPTS="--create-db --tb=short -n auto --maxprocesses=4 --dist loadgroup" test` | After migration changes or interrupted run |
+| Stop | `$dc down` | Done (preserves named volume) |
+
+**Run a single test / file** — pass pytest args via `PYTEST_OPTS`:
+```powershell
+$dc run --rm -e PYTEST_OPTS="-k test_name" test
+$dc run --rm -e PYTEST_OPTS="src/backend/apps/ads/tests/test_edit.py src/backend/apps/ads/tests/test_submission.py --tb=short" test
+```
+Two caveats (verified): the value is **unquoted** in `docker/entrypoint-test.sh`, so each token is word-split on spaces — `-k test_name` and bare file paths work, but quoted multi-token values (e.g. `-k "a b"`) do **not**. Setting `PYTEST_OPTS` also **replaces** the defaults (`--reuse-db --tb=short --durations=10 -n auto --maxprocesses=4 --dist loadgroup`), so targeted runs lose xdist parallelism and DB reuse. Never use `--override-ini=addopts=` — it strips `--import-mode=importlib` (set in `pyproject.toml`).
+
+**Entry-point flow** (`docker/entrypoint.sh` = image `ENTRYPOINT`; `docker/entrypoint-test.sh` = `test` service `command`):
+1. `entrypoint.sh` — wait for DB/Redis, `compilemessages` (.po→.mo), `check --deploy` (non-fatal).
+2. `entrypoint-test.sh` — `uv sync --frozen --no-install-project --group dev`, then `pytest` with defaults `--reuse-db --tb=short --durations=10 -n auto --maxprocesses=4 --dist loadgroup` (overridable via `PYTEST_OPTS`). **The test container performs no database setup at all** — the base `entrypoint.sh` runs no migrations either. `test_mko_bazuna` is provisioned by pytest-django, and its reference data (search triggers, exchange rates) is restored by the session-autouse `_restore_test_schema_post_db_setup` fixture in `src/backend/conftest.py` under advisory lock 111. `bootstrap_reference_data` is deliberately **not** called on the test path: its `migrate_locked` subprocesses inherit `DATABASE_URL` and would connect to `mko_bazuna`, and its `|| true` masked every real DDL failure.
+
+**Test fixtures** — source of truth: `src/backend/conftest.py` (`pyproject.toml` sets `pythonpath = ["src", "src/backend"]`, `testpaths = ["src/backend", "src/telegram_bot"]`). Canonical fixtures: `seller` (900000001), `user` (900000002), `category`, `city`. Use `create_test_ad(user, category, city, *, status=AdStatus.PUBLISHED, **kwargs)` (sets status timestamps). `src/telegram_bot/tests/conftest.py` redefines these (async `user`) — bot tests cannot import the backend conftest.
+
+## i18n
+
+Wrap user-visible strings in `{% trans %}` / `{% blocktrans %}` (templates) or `gettext` / `gettext_lazy` (Python). `msgstr` must be non-empty for `ru` and `bs`; `en` may be empty (msgid is English). `.mo` files are gitignored (`*.mo`) and are compiled **automatically** at image build, at container start (`entrypoint.sh` → `compile_messages`), and in the CI `i18n` job — so manual `compilemessages` is rarely needed.
+
+**`make makemessages` / `make compilemessages` do NOT work on Win 11 + Docker Desktop.** Verified causes:
+- The dev `web` service `depends_on` `load_catalog`, `redis`, and `seed` (i.e. the whole chain `db→redis→migrate→load_cities→load_catalog→seed→web`) is booted to serve a static string-extraction scan.
+- `uv run` inside a one-shot `run` container triggers a venv sync that fails with `Read-only file system` on `/opt/venv`.
+
+Use this lightweight form instead — `--no-deps` skips the dependency chain, `--entrypoint ""` skips the entrypoint DB-wait/compile, and the venv `python` is called directly (no `uv run` sync):
+
+**Alias (copy once):**
+```powershell
+$dev = 'docker compose --env-file .env.dev -f docker-compose.yml -f docker-compose.dev.override.yml --project-name mko-bazuna-dev'
+```
+
+### Extract — never extract against the tracked tree (safe scratch recipe)
+
+The in-place extraction command **MUTATES the tracked catalogs** in the working tree:
+
+```powershell
+# ⚠️ MUTATES TRACKED FILES — extracts against the working tree's LOCALE_PATHS and rewrites
+# src/backend/locale/{ru,bs,en}/LC_MESSAGES/django.po. Do NOT run this for measurement/audit;
+# use the scratch recipe below.
+$dev run --rm --no-deps --entrypoint "" web python src/backend/manage.py makemessages -l ru -l bs -l en --no-location --no-obsolete
+```
+
+**Why a scratch `LOCALE_PATHS` override is not enough (C-08-1).** `makemessages`'s directory walk
+inserts every discovered directory named `locale/` at index 0 of `self.locale_paths`
+(`django/core/management/commands/makemessages.py`, `find_files`). Because the tree contains
+`src/backend/locale`, that in-tree directory becomes the command's `default_locale_path`
+**independent of `settings.LOCALE_PATHS`**. Assigning `settings.LOCALE_PATHS` (post- **or**
+pre-`django.setup()`) therefore does **not** redirect the write — the tracked `.po` is still written.
+**Only a copy of the WHOLE source tree is safe.**
+
+**SAFE RECIPE — extract to scratch, never in place:**
+
+1. Copy the **WHOLE REPO tree** to a scratch directory **OUTSIDE the working tree** (matching the
+   image's `/app` walk root; walking a narrowed subtree instead gives a bogus extraction diff). Use
+   `git archive` for a byte-exact, tracked-only copy (excludes `.git`):
+   ```powershell
+   $scratch = Join-Path $env:TEMP "kilo\extract-$(Get-Date -Format yyyyMMdd_HHmmss)"
+   New-Item -ItemType Directory -Path $scratch | Out-Null
+   git archive HEAD | tar -x -C $scratch
+   ```
+2. Run `makemessages` **there**, from the scratch **repo root** (walk root `/app`, script
+   `src/backend/manage.py` — C-B06-1). The scratch tree has no `.env` (gitignored), so mount the
+   working tree's `.env.dev` read-only at the path settings expect (`BASE_DIR / ".env"` =
+   `/app/src/.env`) — the same mount `docker-compose.yml` uses. Use `--no-location --no-obsolete`
+   (DRIFT-1) so the diff is msgid/msgstr-only:
+   ```powershell
+   docker run --rm --entrypoint "" -w /app -v "$scratch`:/app" `
+     -v "$((Resolve-Path .env.dev).Path):/app/src/.env:ro" `
+     -e DJANGO_SETTINGS_MODULE=config.settings.dev `
+     -e PYTHONPATH=/app/src:/app/src/backend `
+     mko-bazuna-dev-web:latest `
+     python src/backend/manage.py makemessages -l ru -l bs -l en --no-location --no-obsolete `
+       --ignore=.venv --ignore=__pycache__
+   ```
+3. **Diff** the scratch `.po` msgid/msgstr sets against the tracked `.po` (e.g. via the canonical
+   parser `testing.i18n_helpers._parse_po_entries`) to enumerate the exact ADDED/REMOVED entries.
+4. **Apply ONLY the enumerated, targeted change** to the tracked catalogs **by hand**. Never copy
+   the raw scratch output verbatim — it can contain fuzzy merge artifacts that conflate distinct
+   msgids.
+
+The tracked tree must be untouched by steps 1-3: verify with
+`git status --short -- src/backend/locale` (empty). `.\Makefile.ps1 extract-messages` wraps steps 1-2.
+
+Compile (`.mo` gitignored — only needed manually after editing `.po`):
+```powershell
+$dev run --rm --no-deps --entrypoint "" web python src/backend/manage.py compilemessages --ignore=.venv --ignore=.git --ignore=__pycache__ --ignore=*.pyc --ignore=node_modules --locale ru --locale bs --locale en
+```
+
+Requires `.env.dev` (copy `.env.dev.example`). Verified in-image: `xgettext` (GNU gettext 0.23.1), `msgfmt`, and `makemessages`/`compilemessages --help` run with exit 0 and **no database**. DB-based i18n (`feature_tag.html` → `get_lookup_name`) is exempt from the completeness gate; after changing strings, `.\Makefile.ps1 test` (or `test_i18n_completeness.py`) must pass.
