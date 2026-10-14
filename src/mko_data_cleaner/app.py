@@ -47,7 +47,7 @@ def run(
             exists=False,
             file_okay=False,
             dir_okay=True,
-            help="Директория пользовательских настроек (по умолчанию — системная)",
+            help="User settings directory (default: system config dir)",
         ),
     ] = None,
 ):
@@ -55,8 +55,8 @@ def run(
     if verbose:
         console.print(f"[blue]▶ Запуск отчёта:[/blue] {report.name}")
 
-    # Сервис создаётся через фабрику; SettingsNotInitializedError пробрасывается
-    # наружу, если настройки не инициализированы.
+    # The service is created via the factory; SettingsNotInitializedError is
+    # propagated when user settings are not initialized.
     service = get_app_service(settings_dir)
 
     try:
@@ -76,26 +76,26 @@ def list_settings(
             exists=False,
             file_okay=False,
             dir_okay=True,
-            help="Директория пользовательских настроек (по умолчанию — системная)",
+            help="User settings directory (default: system config dir)",
         ),
     ] = None,
 ):
-    """Показать файлы настроек в директории пользователя"""
+    """Show settings files in the user settings directory"""
     app_paths = build_app_paths(settings_dir)
     settings_path = app_paths.user_settings_dir
 
     if not settings_path.is_dir():
         console.print(
-            f"[yellow]⚠ Директория настроек не найдена: {settings_path}[/yellow]"
+            f"[yellow]⚠ Settings directory not found: {settings_path}[/yellow]"
         )
-        console.print("Запустите `mko-data-cleaner init` для создания настроек.")
+        console.print("Run `mko-data-cleaner init` to create settings.")
         return
 
     files = list_files_in_directory(
         settings_path, extensions=("yaml", "yml"), include_subfolders=False
     )
     if not files:
-        console.print("[yellow]Нет файлов настроек[/yellow]")
+        console.print("[yellow]No settings files found[/yellow]")
         return
     for f in sorted(files):
         console.print(f"• {f.name}")
