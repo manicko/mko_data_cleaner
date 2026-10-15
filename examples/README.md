@@ -36,7 +36,7 @@ referenced or required) and runs the full clean → map → export cycle.
 | 1 | markdown | | Title + purpose + prerequisites |
 | 2 | code | `install` | Import-guard `%pip install ...@v0.1.0` (no-op in dev venv) |
 | 3 | markdown | | "Import the library and public API" |
-| 4 | code | | Imports + `__version__` + `process_data` docstring (installs a tiny `OutStream.reconfigure` shim so the package imports under a real ipykernel — see Troubleshooting) |
+| 4 | code | | Imports + `__version__` + `process_data` docstring |
 | 5 | markdown | | "Initialize settings" |
 | 6 | code | | `initialize_settings(settings_dir=tempdir)` → `app_config.yaml` + `log_config.yaml` |
 | 6b | code | | Config override: `index_column=ADID`; `date_column` key dropped (see Troubleshooting) |
@@ -122,12 +122,7 @@ Null-data extract (`null_data_*.csv.gz`) — 2 rows (`BRANDS;tag`): `Orange;null
   only cut in a later release step. Until then, use the local dev install
   (`uv sync`) and run the notebook in that environment — the import guard makes
   the install cell a no-op.
-- **`AttributeError: 'OutStream' object has no attribute 'reconfigure'`.**
-  `mko_data_cleaner.app` calls `sys.stdout.reconfigure(line_buffering=True)` at
-  import time. Under ipykernel, `sys.stdout` is an `OutStream` without
-  `reconfigure`. Cell 4 installs a no-op `reconfigure` shim before the import so
-  the package loads under a real kernel (line buffering is irrelevant in a
-  kernel).
+- **`AttributeError: 'OutStream' object has no attribute 'reconfigure'` (should not occur).** Fixed in the package: `mko_data_cleaner.app` guards the import-time `sys.stdout.reconfigure(line_buffering=True)` call with `hasattr(sys.stdout, "reconfigure")`, so ipykernel's `OutStream` is skipped and the package imports under a real kernel with **no notebook shim** required (line buffering is irrelevant inside a kernel).
 - **`SettingsNotInitializedError` / `FileNotFoundError: app_config.yaml`.** Run
   cell 6 (`initialize_settings`) before cell 12 (`process_data`).
 - **`DataSettings` validation error on `date_column`.** The model field
