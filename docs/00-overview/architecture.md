@@ -249,7 +249,7 @@ as `❌ Ошибка: …` and exits with code 1.
 | 5 | `rich` imported but undeclared; license metadata (MIT classifier) contradicts the BSD-3-Clause LICENSE; no `__version__`; empty top-level `__init__.py` | Publishing/install risk | Owner-confirmed target fixes (D4, R9), detailed in open-questions D-8 |
 | 6 | No CI, no git tags, no example notebook yet | Reproducibility depends on the developer machine | Owner-confirmed target work (D9–D11) |
 | 7 | README documents the removed `core.app_service.app_service` singleton | Users following the README hit an `ImportError` | **Resolved** — README section removed (D-3) |
-| 8 | Duplicate execution of the DELETE statement in `_apply_delete` | Harmless (second pass matches nothing) but wasteful | Defect noted; full description in [`01-apply-delete-double-execution.md`](../../.ai/audit/problems/01-apply-delete-double-execution.md); **not fixed** (task forbids code changes) |
+| 8 | Duplicate execution of the DELETE statement in `_apply_delete` | Harmless (second pass matches nothing) but wasteful | **Fixed** in commit `4af9813` — `_apply_delete` now executes the DELETE exactly once (the duplicate `self.perform_query(sql)` call was removed; the `logger.debug` line was retained); a regression test `test_apply_delete_executes_delete_once` was added. Full description in [`01-apply-delete-double-execution.md`](../../.ai/audit/problems/01-apply-delete-double-execution.md) |
 
 ## Related Docs
 
