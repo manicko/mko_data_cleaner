@@ -1,3 +1,13 @@
+import importlib.util
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+from mko_data_cleaner.core.db_service import DBWorker
+
+
 def test_create_table(db_worker):
     db_worker.create_table("test_table", "col1", "col2")
 
@@ -197,3 +207,93 @@ def test_create_search_table(db_worker):
     all_tables = {t[0] for t in fts_tables}
 
     assert fts_table in all_tables
+
+
+# --------------------------------------------------------------------------- #
+# PyArrow installation guard (robustness for the ADBC write path)
+# --------------------------------------------------------------------------- #
+def test_pyarrow_guard_noop_when_absent(tmp_path: Path, monkeypatch):
+    """Guard is a no-op when find_spec('pyarrow') returns None — DBWorker succeeds.
+
+    Simulates an environment where pyarrow is fully absent. The ADBC SQLite
+    write path operates without pyarrow (verified on polars >= 1.38.1), so
+    DBWorker must construct normally.
+    """
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "pyarrow":
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    db_file = tmp_path / "noop_test.db"
+    worker = DBWorker(db_file=db_file, tbl_name="data_table", index_column="id")
+    assert worker.db_adb_con is not None
+    worker.close()
+
+
+def test_pyarrow_broken_guard_raises_actionable_error(tmp_path: Path):
+    """Guard raises PyArrowInstallationError when pyarrow spec exists but import fails.
+
+    Simulates a broken/partial pyarrow installation by placing a fake
+    ``pyarrow.py`` on PYTHONPATH that raises ImportError on import. Follows
+    the subprocess-isolation pattern from tests/test_app.py.
+    """
+    fake_site = tmp_path / "fake_pyarrow_site"
+    fake_site.mkdir()
+    (fake_site / "pyarrow.py").write_text(
+        "raise ImportError('broken native module')\n",
+        encoding="utf-8",
+    )
+
+    db_file = tmp_path / "guard_test.db"
+
+    script = textwrap.dedent(
+        """\
+        import sys
+        from mko_data_cleaner.core.db_service import DBWorker
+        from mko_data_cleaner.core.errors import PyArrowInstallationError
+
+        try:
+            DBWorker(db_file=sys.argv[1], tbl_name="data_table", index_column="id")
+            sys.stderr.write("FAIL: guard did not fire\\n")
+            sys.exit(1)
+        except PyArrowInstallationError as exc:
+            sys.stdout.write(
+                "GUARD_OK: PyArrowInstallationError: " + str(exc) + "\\n"
+            )
+            sys.exit(0)
+        except Exception as exc:
+            sys.stderr.write(
+                "FAIL: wrong exception "
+                + type(exc).__name__
+                + ": "
+                + str(exc)
+                + "\\n"
+            )
+            sys.exit(1)
+        """
+    )
+
+    env = os.environ.copy()
+    existing_pp = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(fake_site) + (os.pathsep + existing_pp if existing_pp else "")
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(db_file)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, (
+        f"subprocess failed (rc={result.returncode}):\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "GUARD_OK" in result.stdout
+    assert "PyArrowInstallationError" in result.stdout
+    assert "--force-reinstall" in result.stdout

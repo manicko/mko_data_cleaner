@@ -130,6 +130,14 @@ Null-data extract (`null_data_*.csv.gz`) — 2 rows (`BRANDS;tag`): `Orange;null
   `ValidationError`. Cell 6b **drops** the `date_column` key (letting the
   default `None` apply) instead of assigning `None`, which yields the intended
   "no date column" behavior without triggering validation.
-- **Reading the CSVs.** The exported CSVs are `;`-separated (per config).
-  `pl.read_csv(path, separator=";")` yields the full column layout; the notebook's
-  quick `.head()` reads use the same separator.
+  - **Reading the CSVs.** The exported CSVs are `;`-separated (per config).
+    `pl.read_csv(path, separator=";")` yields the full column layout; the notebook's
+    quick `.head()` reads use the same separator.
+- **`ProgrammingError: This API requires PyArrow to be installed`.** This occurs
+  when `pyarrow` is present on disk (a `find_spec` lookup succeeds) but cannot be
+  imported — a broken or partial installation (e.g. leftover user-site files or a
+  failed native-extension install). polars and `adbc-driver-manager` disagree on
+  pyarrow availability, so the failure surfaces deep inside
+  `DataFrame.write_database(engine="adbc")`. The package detects this state early
+  and raises `PyArrowInstallationError` — fix with
+  `pip install --force-reinstall pyarrow` in a clean venv.

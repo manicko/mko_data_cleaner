@@ -28,3 +28,26 @@ class SettingsNotInitializedError(FileNotFoundError):
             "Run mko_data_cleaner.app.initialize_settings() to generate default "
             "settings."
         )
+
+
+class PyArrowInstallationError(RuntimeError):
+    """Raised when pyarrow is present on disk (findable by find_spec) but
+    cannot be imported — i.e. a broken/partial installation.
+
+    This state is detected before the ADBC write path because polars and
+    adbc-driver-manager disagree on pyarrow availability: polars uses
+    ``find_spec`` (succeeds for a broken module layout) while adbc-driver-manager
+    performs a real ``import pyarrow``. The mismatch surfaces deep inside
+    ``conn.adbc_get_info()`` as a cryptic
+    ``ProgrammingError: This API requires PyArrow to be installed``.
+    """
+
+    _MESSAGE = (
+        "pyarrow is installed on disk but cannot be imported — your pyarrow "
+        "installation is broken or partial (e.g. leftover user-site files or a "
+        "failed native-extension install). "
+        "Fix with: python -m pip install --force-reinstall pyarrow"
+    )
+
+    def __init__(self, message: str | None = None):
+        super().__init__(message or self._MESSAGE)

@@ -1,3 +1,5 @@
+import importlib
+import importlib.util
 import logging
 import sqlite3
 import traceback
@@ -7,7 +9,7 @@ from typing import Any
 
 import adbc_driver_sqlite.dbapi as adb
 
-from .errors import WrongDataSettings
+from .errors import PyArrowInstallationError, WrongDataSettings
 from .models import ActionType, MappingColumns
 from .utils import clean_names, make_valid, validate_names
 
@@ -25,6 +27,32 @@ DATA_TO_SQL_PARAMS = {
     "index_label": None,
     "chunksize": 2000,
 }
+
+
+def _ensure_pyarrow_importable() -> None:
+    """Detect a broken/partial pyarrow installation before the ADBC write path.
+
+    polars and adbc-driver-manager disagree on how they detect pyarrow:
+    polars uses ``importlib.util.find_spec`` (which succeeds if a pyarrow
+    package exists on disk) while adbc-driver-manager performs a real
+    ``import pyarrow`` and caches the result. When a pyarrow installation is
+    present on disk but cannot be imported (broken native extensions, leftover
+    user-site installs), polars proceeds to call ``conn.adbc_get_info()``,
+    which raises a cryptic
+    ``ProgrammingError: This API requires PyArrow to be installed``.
+
+    This guard performs the real import itself and surfaces a clear, actionable
+    error early. A fully absent pyarrow is left untouched — the ADBC SQLite
+    write path operates without pyarrow (verified on polars 1.38.1 / 1.44.2).
+    """
+    spec = importlib.util.find_spec("pyarrow")
+    if spec is None:
+        # pyarrow absent — the ADBC SQLite write path works without it.
+        return
+    try:
+        import pyarrow  # noqa: F401
+    except ImportError as exc:
+        raise PyArrowInstallationError() from exc
 
 
 class DBWorker:
@@ -52,6 +80,7 @@ class DBWorker:
     ):
         self.db_file = db_file
         self.db_con = sqlite3.connect(self.db_file)
+        _ensure_pyarrow_importable()
         self.db_adb_con = adb.connect(str(self.db_file.as_posix()))
         self.data_tbl_name = make_valid(tbl_name)
         self.index_column = make_valid(index_column) if index_column else None
