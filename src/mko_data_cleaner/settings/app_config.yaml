@@ -33,8 +33,7 @@
       "skip_rows": 0,
       "has_header": True,
       "ignore_errors": False,
-      "infer_schema_length":False,
-      "rechunk": False
+      "infer_schema_length":False
     }
   },
   'export_settings': {

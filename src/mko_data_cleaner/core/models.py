@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     NonNegativeInt,
     StringConstraints,
+    model_validator,
 )
 
 
@@ -98,8 +99,19 @@ class PolarsReadCSV(BaseModel):
     decimal_comma: bool = True
     has_header: bool = True
     ignore_errors: bool = False
-    rechunk: bool = False
     infer_schema_length: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_removed_reader_keys(cls, data: Any) -> Any:
+        # polars 2.0 removed the `rechunk` read_csv argument. Older user configs
+        # still carry `rechunk: False`; because this model allows extras, that
+        # key would linger in __pydantic_extra__ and flow through model_dump()
+        # into reader_settings, crashing polars 2.x read_csv/scan_csv. Strip it
+        # here at the validation boundary so reader_settings stays clean.
+        if isinstance(data, dict):
+            data.pop("rechunk", None)
+        return data
 
 
 # ---------------Dictionary
