@@ -297,3 +297,55 @@ def test_pyarrow_broken_guard_raises_actionable_error(tmp_path: Path):
     assert "GUARD_OK" in result.stdout
     assert "PyArrowInstallationError" in result.stdout
     assert "--force-reinstall" in result.stdout
+
+
+def test_apply_delete_executes_delete_once(db_worker, mocker):
+    """``_apply_delete`` must run the DELETE statement exactly once.
+
+    Regression test for the duplicated ``perform_query`` call that previously
+    executed the identical DELETE a second time — dead work because the matched
+    rows were already removed by the first call.
+    """
+    # --- arrange: target table with at least two rows ---
+    db_worker.create_table(db_worker.data_tbl_name, "adId", "brand", "sponsor")
+
+    target = db_worker.target_table
+
+    insert_q = f"INSERT INTO {target} (adId, brand, sponsor) VALUES (?, ?, ?)"
+    for ad_id in ("ad1", "ad2", "ad3"):
+        db_worker.perform_query(insert_q, (ad_id, "BrandX", None))
+
+    rowids = [
+        r[0]
+        for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
+    ]
+    assert len(rowids) == 3
+
+    # TEMP joined_matches_table referencing only the first inserted row.
+    db_worker.perform_query(
+        f"CREATE TEMP TABLE {db_worker._joined_matches_table} (data_rowid INTEGER)"
+    )
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker._joined_matches_table} (data_rowid) VALUES (?)",
+        (rowids[0],),
+    )
+
+    # --- act: spy BEFORE the call-under-test so only its query is recorded ---
+    spy = mocker.spy(db_worker, "perform_query")
+
+    db_worker._apply_delete()
+
+    # --- assert: single execution ---
+    assert spy.call_count == 1
+
+    executed_sql = spy.call_args_list[0].args[0]
+    assert "DELETE FROM" in executed_sql
+    assert target in executed_sql
+
+    # --- assert: matched row gone, unmatched rows remain ---
+    remaining = [
+        r[0]
+        for r in db_worker.db_con.execute(f"SELECT rowid FROM {target}").fetchall()
+    ]
+    assert rowids[0] not in remaining
+    assert len(remaining) == 2

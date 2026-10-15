@@ -669,7 +669,6 @@ class DBWorker:
         self.perform_query(sql)
 
         logger.debug(f"Apply delete rules to {self.target_table}")
-        self.perform_query(sql)
 
     def _apply_replace(self, column_names: list):
         extra_cols_set = set(self.extra_columns)
