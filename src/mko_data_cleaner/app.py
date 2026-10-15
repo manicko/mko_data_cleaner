@@ -14,7 +14,14 @@ from mko_data_cleaner.core.init_service import init_project
 from mko_data_cleaner.core.models import ReportResult
 from mko_data_cleaner.core.utils import list_files_in_directory
 
-sys.stdout.reconfigure(line_buffering=True)
+# Jupyter / ipykernel replaces sys.stdout (and sys.stderr) with an OutStream-like
+# object that does not implement reconfigure(). The previous unconditional call
+# raised AttributeError at import time and broke `import mko_data_cleaner` inside
+# any kernel — the project's primary "Jupyter pipeline step" entry point. Guard
+# the call so it only reconfigures real terminal streams; kernels skip it
+# (line buffering is irrelevant inside a kernel).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
 
 console = Console()
 app = typer.Typer(

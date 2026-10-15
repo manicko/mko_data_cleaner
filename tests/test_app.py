@@ -101,6 +101,36 @@ def test_import_app_does_not_create_settings_dir(tmp_path: Path):
     assert result.returncode == 0, result.stderr
 
 
+def test_import_survives_stdout_without_reconfigure():
+    """Importing must not crash when sys.stdout lacks reconfigure() (ipykernel).
+
+    ``mko_data_cleaner.app`` calls ``sys.stdout.reconfigure(line_buffering=True)``
+    at import time. Jupyter/ipykernel replace ``sys.stdout`` with an ``OutStream``
+    that has no ``reconfigure``, which previously raised ``AttributeError`` and
+    broke ``import mko_data_cleaner`` inside any kernel — the project's primary
+    "Jupyter pipeline step" entry point. Run in a subprocess with a stdout that
+    lacks ``reconfigure`` to avoid import-state pollution of the test process.
+    """
+    script = (
+        "import sys\n"
+        "class _NoReconStream:\n"
+        "    encoding = 'utf-8'\n"
+        "    def write(self, _s): pass\n"
+        "    def flush(self): pass\n"
+        "sys.stdout = _NoReconStream()\n"
+        "import mko_data_cleaner  # noqa: F401\n"
+        "import mko_data_cleaner.app  # noqa: F401\n"
+        "sys.stderr.write('RECONFIG_OK')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "RECONFIG_OK" in result.stderr
+
+
 # --------------------------------------------------------------------------- #
 # 2-4. process_data without settings
 # --------------------------------------------------------------------------- #
