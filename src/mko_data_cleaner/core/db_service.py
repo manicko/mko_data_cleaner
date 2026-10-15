@@ -22,24 +22,29 @@ VALID_COLUMN_DTYPES = ("TEXT", "NUMERIC", "INTEGER", "REAL", "BLOB")
 
 
 def _ensure_pyarrow_importable() -> None:
-    """Detect a broken/partial pyarrow installation before the ADBC write path.
+    """Guard the ADBC write path against a broken pyarrow install.
 
-    polars and adbc-driver-manager disagree on how they detect pyarrow:
-    polars uses ``importlib.util.find_spec`` (which succeeds if a pyarrow
+    Root cause — polars and adbc-driver-manager disagree on pyarrow availability:
+    polars probes it with ``importlib.util.find_spec`` (true whenever a pyarrow
     package exists on disk) while adbc-driver-manager performs a real
-    ``import pyarrow`` and caches the result. When a pyarrow installation is
-    present on disk but cannot be imported (broken native extensions, leftover
-    user-site installs), polars proceeds to call ``conn.adbc_get_info()``,
-    which raises a cryptic
+    ``import pyarrow``. So when pyarrow is present on disk but cannot be
+    imported (broken native extensions, stale user-site files), polars proceeds
+    and only ``conn.adbc_get_info()`` later fails with a cryptic
     ``ProgrammingError: This API requires PyArrow to be installed``.
 
-    This guard performs the real import itself and surfaces a clear, actionable
-    error early. A fully absent pyarrow is left untouched — the ADBC SQLite
-    write path operates without pyarrow (verified on polars 1.38.1 / 1.44.2).
+    Behaviour:
+    * spec missing (pyarrow fully absent) -> pass through. With
+      ``adbc_driver_manager >= 1.6`` polars hands the DataFrame to ADBC via the
+      Arrow C stream (PyCapsule), so the SQLite write path never imports
+      pyarrow. Stable on polars 2.0; on 1.x pyarrow remains a declared project
+      dependency.
+    * spec present but ``import pyarrow`` raises -> raise
+      PyArrowInstallationError, whose message carries the
+      ``--force-reinstall`` remediation.
     """
     spec = importlib.util.find_spec("pyarrow")
     if spec is None:
-        # pyarrow absent — the ADBC SQLite write path works without it.
+        # pyarrow fully absent -> ADBC SQLite write path works without it.
         return
     try:
         import pyarrow  # noqa: F401
