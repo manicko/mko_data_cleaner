@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  UV_VERSION: "0.9.26"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          uv-version: "0.9.26"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync
+      - run: uv run ruff check src/ tests/
+      - run: uv run pytest
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          uv-version: "0.9.26"
+          python-version: "3.14"
+          enable-cache: true
+      - run: uv sync
+      - run: uv run python -m build
+      - run: uv run twine check --strict dist/*
+      - run: uv run check-wheel-contents --package src/mko_data_cleaner dist/*.whl
+      - name: Assert wheel contents (YAML templates + no leakage)
+        run: |
+          wheel=$(ls dist/*.whl | head -1)
+          uv run python -c "import zipfile; names = zipfile.ZipFile('$wheel').namelist(); assert 'mko_data_cleaner/settings/app_config.yaml' in names, 'app_config.yaml MISSING from wheel'; assert 'mko_data_cleaner/settings/log_config.yaml' in names, 'log_config.yaml MISSING from wheel'; leaked = [n for n in names if '/data/' in n or n.startswith('data/')]; assert not leaked, 'data/ leaked into wheel: ' + str(leaked); stale = [n for n in names if 'mko_get_mediascope_data' in n]; assert not stale, 'stale name leaked into wheel: ' + str(stale); print(f'Wheel OK: {len(names)} entries, YAML templates present, no data/ leakage')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  install-smoke:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          uv-version: "0.9.26"
+          python-version: "3.14"
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Fresh venv install + smoke test
+        run: |
+          uv venv /tmp/smoke-venv --python 3.14
+          uv pip install --python /tmp/smoke-venv/bin/python dist/*.whl
+          /tmp/smoke-venv/bin/python scripts/smoke_install.py
+
+  notebook:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          uv-version: "0.9.26"
+          python-version: "3.14"
+          enable-cache: true
+      - run: uv sync
+      - name: Execute example notebook
+        run: |
+          uv run python - <<'PYEOF'
+          import nbformat
+          from nbclient import NotebookClient
+
+          nb = nbformat.read('examples/notebooks/mko_data_cleaner_pipeline_example.ipynb', as_version=4)
+          nbformat.validate(nb)
+          client = NotebookClient(nb, timeout=300, kernel_name='python3')
+          client.execute()
+          print('Notebook executed OK')
+          PYEOF
