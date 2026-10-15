@@ -15,7 +15,7 @@ the wrong decision, would anything notice? The lens is the gap between the assur
 property under test, a helper layer whose defaults are a second contract with the product, boundaries covered from one side only, a harness whose own machinery decides what can and cannot be tested, failures
 nobody can reproduce, and gates that are declared, loaded, green, or inert. This file names what to examine and under which angle; the executing auditor discovers the concrete artifacts.
 
-Scope boundaries — other phases own: production-code convention defects and dead code (10); pipeline and container posture (12); transaction, lock, and pooler semantics (03); lifecycle correctness (05);
+Scope boundaries — other phases own: production-code convention defects and dead code (10); pipeline posture (12); import-time bootstrap and the settings gate (01); template-to-model conformance (05);
 settings values and environment policy (02); namespace rulings and cross-phase conflict resolution (99). This phase owns whether the suite would notice, and the fidelity of what it asserts once it does.
 What the rendered outcome is, and what a derived quantity equals, are 16's and 17's; this phase owns whether the suite would notice either.
 
@@ -38,7 +38,7 @@ inverted.
 
 ### 2. What the doubles remove
 
-*For every boundary a test replaces — a patched collaborator, a stubbed deferral or scheduling primitive, an in-memory stand-in for real persistence, a source-text inspection standing in for a runtime
+*For every boundary a test replaces — a patched collaborator, a stubbed deferral or ordering mechanism, an in-memory stand-in for real persistence, a source-text inspection standing in for a runtime
  observation, a reconstructed call chain — establish what property of the real thing can no longer be observed, and whether any test anywhere observes it. Replacing an external transport is correct, cheap, and
  is not this block's finding; replacing the mechanism under test removes the subject. A double standing in for a mechanism that exists to enforce an ordering leaves the ordering untested while making it look
  tested, and an assertion reduced to matching the shape of the source observes the source text rather than the behaviour. Build the inventory from what the tests actually replace, not from a declared convention
@@ -67,10 +67,10 @@ the test that gates their remediation.
 
 ### 5. The harness as a system
 
-*Establish how test fixtures are set up, how mock collaborators are configured, how parallel execution partitions and isolates, what bounds a runaway query, and what each registered marker is wired to. Then establish
- the substitution semantics of the invocation: what a caller loses when the default options are overridden, and whether the two execution paths this project supports reach the same runtime configuration.
- Several arrangements here are deliberate and hard-won, and each is a claim to verify rather than a defect: a step excluded from the fast path, where nothing detects the failures running it would otherwise
- surface; two helper universes separated by an execution model neither can cross; an import-path shim retained so that existing patch targets still resolve after their module moved.
+*Establish how test fixtures are set up, how mock collaborators are configured, how parallel test execution partitions and isolates, what bounds a runaway query, and what each registered marker is wired to. Then establish
+ the substitution semantics of the invocation: what a caller loses when the default options are overridden, and whether the project supports multiple execution paths reach the same runtime configuration.
+ Several arrangements here are deliberate and hard-won, and each is a claim to verify rather than a defect: a step excluded from the narrowed execution path, where nothing detects the failures running it would otherwise
+ surface; whether the project separates test helper universes by execution model; whether an import-path shim is retained so that existing patch targets still resolve after their module moved.
  Establish what each costs, what still holds it in place, and what a change would have to preserve. Finally: which tests the harness cannot currently host, and which missing coverage each explains. Establish
  what a change to a config template or model does to the run — its effect, not only whether it applies cleanly and repeatably — since a configuration assembled by a path other than the validated one cannot see it.*
 Evidence: the fixture, mock, isolation, and marker-wiring facts; the override-substitution delta; the deliberate arrangements with what holds each in place; the
@@ -80,14 +80,14 @@ tests the harness cannot host and the gap each names.
 
 *Given a red run in automation, establish whether it can be reproduced: what varies per run and whether the variation is recorded where a reader of the log will find it, what is unbounded while a test runs,
  what a parallel run does that a serial run does not, and what a reused resource carries forward into the next run. Do not settle for running the suite twice and comparing. Order-independence is a per-test property
- and not a suite property: a shuffling plugin makes no individual test independent, so establish which tests depend on a resource another test left behind and which depend on being first. A test that reads the
+ and not a suite property: a reordering of tests makes no individual test independent, so establish which tests depend on a resource another test left behind and which depend on being first. A test that reads the
  same clock, the same ambient environment, or the same process-wide state as the code it exercises is not isolated from the code it tests.*
 Evidence: the per-run variable inventory with what is recorded and where; the unbounded resources and their owners; the process-wide state a test shares with production
 code; what state a reused resource carries between runs; the recovery procedure for a red automated run.
 
 ### 7. What actually blocks a merge
 
-*For each declared gate — static analysis, types, tests, coverage, translation completeness, security and dependency and secret scanning, deploy check, scheduled suites — establish whether it is loaded, whether
+*For each declared gate — static analysis (ruff), types (mypy), and tests (pytest) — no coverage gate, no security/dependency/secret scanning, no deploy check, no scheduled suites exist in this local-only project — establish whether it is loaded, whether
  it is green, and what its scope excludes. Four absences are distinct and must be told apart: a gate declared and never loaded, a gate loaded and red, a gate whose scope omits a whole process tree, and a gate
  whose configuration sits in the repository but is never read from the directory it runs in. Where the gate is a type checker, ask what it is configured to enforce, what its configured scope includes, and what
  noise class is sanctioned: assert no strictness bar the project did not set, and treat no diagnostic count as the finding. This phase owns only whether the test tree is inside that gate's scope and whether the
@@ -113,7 +113,7 @@ Grade by **effect and blast radius**, not by mechanism name; rate what is true n
 mechanism is not named here still lands by the consequence it is producing. A band with no present occupant is left empty, not filled.
 
 - **CRITICAL** — the suite's green is affirmatively false today: a shipped assertion the product cannot satisfy, or a decision the system acts on whose effect no assertion anywhere can observe, where the
-  unobserved effect is one a user or a seller receives.
+  unobserved effect is one a user or an operator receives.
 - **HIGH** — a gap that will be mistaken for coverage and is silent today: a decision exercised only through a stand-in for the thing it decides, a boundary asserted from one side only, a property the harness
   depends on that nothing holds it to, a gate declared and never loaded, a measurement whose effective scope is not the scope it is read for.
 - **MEDIUM** — bounded and real, with a specific audience: a gate loaded and red over a known accepted-noise class, a resource left unbounded so that one test can take the run down, state carried forward
@@ -125,8 +125,7 @@ mechanism is not named here still lands by the consequence it is producing. A ba
 
 - Findings path: `.ai/audit/11-test-coverage/findings.md` — cumulative: a new run appends or supersedes, it does not restart
 - Template: `.ai/audit/templates/audit-findings.md` — follow it for front matter, summary, findings, distribution, cross-finding analysis, roadmap, rollout safety, appendices
-- Finding-ID prefix: `TST-` — **already in use** in shipped source and operations documentation from a prior cycle, with at least one identifier already resolving to two different findings; check for a
-  collision before minting an ID and report it rather than creating a second namespace
+- Finding-ID prefix: `TST-` — Phase 11's test-coverage prefix; repo-wide grep confirms zero `TST-NNN` identifiers in any findings document, test, or shipped source. The `TST-` collision warning is phantom (stale from a prior cycle, same pattern as the disproven `QLT-` warning in Phase 10). Retained with no collision.
 - Incremental append, ≤100 lines per pass
 - `problems-only: true` — findings only, omit passing checks; every finding needs runtime evidence and the exact consequence
 - Empty state, exactly: `No problems found in this phase.`

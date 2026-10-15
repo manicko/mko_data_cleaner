@@ -14,9 +14,7 @@ Audits whether the code holds to the conventions the project has adopted, and wh
 configured to catch, how much one unit does, whether a rule has one implementation, and what the automation would notice if any of it stopped being true. This file names what to examine and under which angle; the executing auditor
 discovers the concrete artifacts.
 
-Scope boundary — other phases own: settings values and environment policy (02); transaction, lock, and pooler semantics (03); lifecycle correctness (05); the event-loop bridge mechanism (09); test adequacy (11); pipeline and container
-posture (12); measurable performance consequences (13); authorization (15). This phase owns convention and consistency inside the code, and asks of every claimed property whether anything checks it — not what a lifecycle decision
-should be, what a request is allowed to do, or how the service is run and deployed. Two live implementations of one derived quantity, and an aggregate definition no caller reaches, are this phase's HIGH and LOW bands; 17 establishes
+Scope boundary — other phases own: settings values and environment policy (02); import-time bootstrap and the settings gate (01); test adequacy (11); pipeline and container posture (12); measurable performance consequences (13). This phase owns convention and consistency inside the code, and asks of every claimed property whether anything checks it — not what a lifecycle decision should be, what a request is allowed to do, or how the service is run and deployed. Two live implementations of one derived quantity, and an aggregate definition no caller reaches, are this phase's HIGH and LOW bands; 17 establishes
 the arithmetic showing whether they agree and records the duplication itself as a deferral here. A declared rendered-surface or accessibility contract measured against the document is 16's measurement; a contract that
 merely has no enforcement point is this phase's.
 
@@ -103,10 +101,10 @@ Evidence: the declared-property inventory with an enforcement point or its absen
 
 ### 9. Template and config drift
 
-*Establish, for every change to a config template or Pydantic model that affects what the API receives, whether the change is recorded — and then, separately, whether anything would notice if it were not. The claim to test is not "a record exists" but "a gate fails when
+*Establish, for every change to a config template or Pydantic model that affects what the pipeline receives, whether the change is recorded — and then, separately, whether anything would notice if it were not. The claim to test is not "a record exists" but "a gate fails when
 one is missing": establish whether the automation detects template-to-model drift at all, over which paths, and whether a check present in configuration is actually executed on every change, or is declared and never wired
 in. Do not assume a gate exists until one is found running; its absence is the finding, not a failure of the block. A check that exists but that no contributor can run locally is a different absence, and a
-narrower one. Separately, establish whether a template key or model field that affects the API request can be added or altered in one place without a corresponding update to its counterpart, and whether such drift is caught by a check that runs repeatably.*
+narrower one. Separately, establish whether a template key or model field that affects the pipeline input can be added or altered in one place without a corresponding update to its counterpart, and whether such drift is caught by a check that runs repeatably.*
 Evidence: the gate inventory — which drift checks exist, where they run, and what they cover; one template-to-model change with no recorded drift detection, or the confirmation that it is caught; every drift
 path with an idempotency verdict.
 
@@ -128,8 +126,7 @@ mechanism is not named here still lands by the consequence it is producing.
 
 - Findings path: `.ai/audit/10-code-quality/findings.md`
 - Template: `.ai/audit/templates/audit-findings.md` — follow it for front matter, summary, findings, distribution, cross-finding analysis, roadmap, rollout safety, appendices
-- Finding-ID prefix: `QLT-` — **already in use** in shipped source from a prior cycle, with at least one identifier already resolving to two different findings; check for a collision before minting an ID
-  and report it rather than creating a second namespace
+- Finding-ID prefix: `QLT-` — Phase 10's convention prefix; grep confirms zero collisions in shipped source (the 5 `QLT-` matches found are placeholder examples in `audit-findings.md` from a different project path, not actual finding IDs).
 - Incremental append, ≤100 lines per pass
 - `problems-only: true` — findings only, omit passing checks; every finding needs runtime evidence and the exact consequence; empty state, exactly: `No problems found in this phase.`
 - If a shipped test asserts the current behaviour as intended, still file the finding and record the test as a remediation blocker.

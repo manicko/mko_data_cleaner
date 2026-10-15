@@ -10,24 +10,22 @@ problems-only: true
 
 ## Purpose
 
-A reusable handbook for auditing the **entry surfaces and startup topology** of a
-standalone async CLI tool and Python library that fetches data from the Mediascope
-API. Three entry surfaces exist: the Typer CLI (`init`, `run`, `list_reports`),
-the library API (`run_report`, `run_report_async`, `initialize_settings`), and
-the module entry (`python -m mko_data_cleaner`). There is no long-lived
-server process — each invocation is one-shot — but the singleton `app_service`
-instantiates at import time and performs configuration loading and logging
-configuration as side effects.
+Audit the entry surfaces and startup topology of a local, synchronous, single-shot
+CLI + library that post-processes Mediascope exports arriving as files on disk —
+no network, no credentials, no async.
 
-This file states *what* to examine and *under which angle*. Concrete artifacts
-— files, modules, entry scripts, identifiers — are discovered by the executing
-auditor, never named here.
+- Surfaces: Typer CLI (`init`, `run`, `list_settings`); console script
+  `mko-data-cleaner`; module entry `python -m mko_data_cleaner.app` (note: no
+  package `__main__.py`); library API `process_data` / `initialize_settings`.
+- The service is built lazily by `get_app_service()`; a bare import performs no
+  filesystem, network, or logging work (stdout reconfigure is the sole exception —
+  see Block 3).
 
-**Scope Boundaries** — owned here: entry surfaces, import-time behaviour,
-configuration bootstrap, and dependency direction. Not owned here: async
-Semaphore/Queue/worker-pool semantics (03); the blocking-work bridge mechanism
-(09); config values and credential provenance (02); CI/CD and packaging posture
-(12); fixed-value enum discipline (10); test-suite entry points (11).
+**Scope:** entry surfaces, import-time behaviour, configuration bootstrap,
+dependency direction, public-API surface hygiene, `settings_dir` forwarding across
+`init`/`run`.
+**Out of scope:** SQLite processing-engine internals (04); test-suite entry points
+(11); packaging/publishing posture (12).
 
 ---
 
@@ -40,97 +38,87 @@ auditor's. A passing check is methodology, never a finding.
 
 ### 1. Entry-Surface Inventory and Import-Time Behaviour
 
-Enumerate every entry surface — the CLI entrypoint, the module entrypoint, the
-console-script, and the library API — and for each establish what executes at
-import versus what is deferred. Check whether importing a surface can write to
-the filesystem, reconfigure stdout, connect to a network, or mutate global
-logging state; whether configuration load and logging setup are ordered
-deliberately on every surface; and whether each surface's configuration source
-is explicit about which variant it selects.
+Enumerate every entry surface; per surface, what runs at import vs. is deferred:
+- Typer CLI commands, the console script, the module entry, the library API.
+- A bare import must not write files, open network, mutate logging, or touch stdout
+  *(Block 3 is the exception)*.
 
-Evidence: the entry-surface inventory with import-time versus deferred work per
-surface; the filesystem, network, or stdout an import can reach; which gates
-analyse which surfaces.
+Evidence: surface list split by import-time vs. call-time work; the import blast
+radius.
 
-### 2. Singleton Bootstrap at Import Time
+### 2. Lazy Service Factory and Bootstrap
 
-Establish what work the singleton service performs at import time: loading YAML
-configuration, resolving paths, and configuring logging via `dictConfig`. Check
-whether the singleton is created eagerly on every import path regardless of
-whether the feature is used, whether a missing or malformed config file fails
-fast or silently, and whether logging configuration has observable side effects
-(file handle creation, log file writes) before the caller opts in.
+Inspect the lazy service factory, **not** an import-time singleton:
+- Two tiers: import-time (stdout reconfigure only); call-time (gate → config load →
+  `dictConfig` → log file).
+- The gate checks existence only — a malformed-but-present config **passes** it,
+  then fails later as `ConfigError`.
 
-Evidence: the bootstrap call graph; what side effects occur on a bare import;
-one induced missing or malformed config and the result.
+Evidence: the factory call graph; one induced missing config (must raise) and one
+malformed config (where it fails).
 
 ### 3. stdout / sys Reconfiguration at Import Time
 
-Establish whether any import-time statement reconfigures `sys.stdout` or
-`sys.stderr` — line buffering, encoding, or stream replacement. Check whether
-the reconfiguration is unconditional, whether it runs on every import path
-including library use, and whether it can interfere with a host process that
-has its own stdout contract (e.g., Jupyter, Airflow, or a test runner).
+Establish whether any module-level statement reconfigures `sys.stdout` /
+`sys.stderr`:
+- One unconditional module-level reconfiguration runs on **every** import path,
+  including library use.
+- Confirm `core/*` does **not** touch stdout (bounds blast radius); assess
+  host-stdout interference (Jupyter, test runner).
 
-Evidence: the reconfiguration statement; whether it runs under a bare import;
-one host-process scenario it affects.
+Evidence: the reconfiguration statement, proof it runs under a bare import, one
+host scenario.
 
 ### 4. Configuration Bootstrap Gate
 
-Establish how the bootstrap gate loads user settings from the config directory:
-which files are read, how paths are resolved relative to the user or package
-directory, and whether validation occurs before use. Check whether the gate can
-be deferred (lazy load) or must succeed at import, whether a missing directory
-or file fails with a actionable message, and whether the `init` command
-correctly materialises templates before the bootstrap reads them.
+Examine the lazy, opt-in settings gate and `settings_dir` forwarding:
+- Does the gate raise on missing files, and is it deferred to the factory call (not
+  import)?
+- Does `init`/the initializer honor a caller-supplied `settings_dir`, or write to a
+  hardcoded dir? (D-6 divergence)
+- Verify `init` materialises templates before the gate can read them.
 
-Evidence: the file-resolution chain; one induced missing file and the message;
-the init→bootstrap ordering dependency.
+Evidence: the gate's failure mode on a missing file; the init→gate ordering; the
+`settings_dir` verdict.
 
 ### 5. Entry-Layer Discipline and Dependency Direction
 
-Establish the layering between the entry layer (CLI, public API), the core
-orchestration layer, and the settings templates. Check whether any lower layer
-imports back from the entry layer, whether the import graph stays acyclic, and
-whether the public API surface is minimal and stable. Confirm that the CLI does
-not embed domain rules that belong in core.
+Verify entry-layer discipline and dependency direction:
+- Strictly entry → `core/*`; no back-import; the import graph is acyclic.
+- The CLI must **not** embed domain rules/persistence that belong in `core/`.
+- **API-surface gap (D-8):** is `__all__` minimal vs. the two-function contract,
+  and does the package root re-export the API?
 
-Evidence: the import-graph direction per layer; every back-import and cycle;
-domain work found inside an entry module.
+Evidence: import direction per layer; every back-import and cycle; `__all__`-vs-
+contract gap.
 
 ### 6. Process Topology and Shutdown
 
-Establish that each invocation is single-shot and asynchronous: the CLI wraps
-its work in a single `asyncio.run` call, the library API provides both sync and
-async wrappers. Check whether the event loop is created once per call, whether
-pending tasks are awaited or abandoned on cancellation, and whether the
-singleton's state (semaphore, queue) is safely discarded between runs.
+Establish the **synchronous, single-shot** topology:
+- One OS process per invocation; work is a straight sync chain: entry → orchestrator
+  → workers.
+- No event loop, no `asyncio.run`, no tasks, no cancellation surface.
+- The only durable resource is the disposable SQLite DB (context manager:
+  checkpoint WAL + delete on exit); no module-scope state.
 
-Evidence: the asyncio.run boundary; cancellation behaviour; one resource that
-leaks across runs.
+Evidence: the synchronous call chain; the context-manager teardown; proof no state
+persists across runs.
 
 ---
 
 ## Severity Taxonomy
 
-Grade by **effect and blast radius**, not by mechanism name; rate what is true
-now, not the worst consequence if triggered.
+Grade by **effect and blast radius**, not mechanism name; rate what is true **now**.
+An empty band is a valid outcome.
 
-- **CRITICAL** — an import-time side effect that corrupts a host process's
-  stdout or logging without consent; a singleton that performs network or
-  filesystem I/O on import and cannot be suppressed by a library caller; a
-  bootstrap gate that silently admits a missing config and proceeds with hidden
-  fallback values.
-- **HIGH** — a documented entry point the lint or type gate never analyses; an
-  entry module that embeds domain rules or persistence; a startup contract that
-  does not hold (e.g., logging writes a file the caller did not request).
-- **MEDIUM** — environment-tier divergence between the CLI and library entry
-  surfaces that is not intentional; an import-time side effect that is
-  unnecessary but not harmful.
-- **LOW** — documentation or comment drift about which surfaces exist or which
-  config they load, with no runtime consequence.
-
-An empty band is a valid outcome — do not populate it with a hypothetical.
+- **CRITICAL** — a gate that silently admits missing/malformed config and proceeds
+  *(currently fail-fast → band stays empty: a regression guard, not a finding)*.
+- **HIGH** — an entry surface that embeds domain rules/persistence; a startup
+  contract that fails to hold.
+- **MEDIUM** — `settings_dir` forwarding asymmetry between `init`/initializer and
+  `run`/library API (D-6); any unsuppressed import-time side effect.
+- **LOW** — documentation / comment drift about surfaces or config; stale
+  project-name references in active files.
 
 ---
 

@@ -150,17 +150,23 @@ YEAR;MONTH;ADVERTISERS;BRANDS;SUBBRANDS;ARTICLE LIST3;ARTICLE LIST4;ADID;MEDIA;C
 
 Названия колонок не важны, важен порядок - индексы колонок задаются в файле конфигурации:
 
-| action | match | search_column_idx | term          | MACRO CATEGORY | MARKETPLACE | BRAND CLEANED |
-|--------|-------|-------------------|---------------|----------------|-------------|---------------|
-| r      | f     | 3                 | APPLE INC     | ELECTRONICS    |             | APPLE         |
-| r      | p     | 5                 | SMART         |                |             | SMARTPHONES   |
-| a      | f     | 2                 | YANDEX        |                |             | YANDEX MARKET |
-| d      | f     | 3                 | DELETE ME     |                |             |               |
-| r      | fts   | 3\|5              | OZON\|MARKET  | MARKETPLACE    | MARKETPLACE | OZON          |
+| action | match | search_column_idx | value | term          | MACRO CATEGORY | MARKETPLACE | BRAND CLEANED |
+|--------|-------|-------------------|-------|---------------|----------------|-------------|---------------|
+| r      | f     | 3                 |       | APPLE INC     | ELECTRONICS    |             | APPLE         |
+| r      | p     | 5                 |       | SMART         |                |             | SMARTPHONES   |
+| a      | f     | 2                 |       | YANDEX        |                |             | YANDEX MARKET |
+| d      | f     | 3                 |       | DELETE ME     |                |             |               |
+| r      | fts   | 3\|5              |       | OZON\|MARKET  | MARKETPLACE    | MARKETPLACE | OZON          |
+
+> Позиции колонок задаются в `app_config.yaml`
+> (`dict_file_settings.col_indexes`, нумерация с 0). В базовой конфигурации
+> `term` читается из 4-й колонки, а колонка 3 (`value`) при применении правил
+> не используется. Если в вашем словаре нет промежуточной колонки, установите
+> в конфиге `term: 3` (и уберите колонку из примеров выше).
 
 **Значения action:**  
 - `r` — REPLACE (добавление/замена значения в колонке)  
-- `a` — ADD (добавление значения к колонке, через разделитель)  
+- `a` — ADD (объединяет (merge) теги всех совпавших правил в колонку, через разделитель)  
 - `d` — DELETE (удаление строки)  
 
 **Значения match:**  
@@ -178,22 +184,28 @@ YEAR;MONTH;ADVERTISERS;BRANDS;SUBBRANDS;ARTICLE LIST3;ARTICLE LIST4;ADID;MEDIA;C
 Правила применяются **строго в порядке**:
 1. **DELETE** (`d`) — полностью удаляет совпавшие строки.
 2. **REPLACE** (`r`) — заменяет значение в указанной колонке.
-3. **ADD** (`a`) — **добавляет** новое значение к уже существующему через разделитель.
+3. **ADD** (`a`) — **объединяет** теги всех совпавших правил в одну колонку через разделитель.
 
 ### Особенности правила ADD
 
-- Новое значение **добавляется**, а не заменяет текущее.
+- Теги всех совпавших правил `a` **объединяются** (merge) в одну колонку.
 - Все теги автоматически становятся **уникальными**.
 - Теги **сортируются по алфавиту**.
 - Разделитель задаётся в `app_config.yaml` (`dict_file_settings.add_separator`, по умолчанию `", "`).
 
 Принцип работы ADD на основе **пользовательской** добавляемой колонки:
 
-| Предыдущее значение | Добавляемое значение | Результат после ADD                     |
-|---------------------|----------------------|-----------------------------------------|
-| ELECTRONICS         | SMARTPHONES          | ELECTRONICS, SMARTPHONES                |
-| BRAND1, BRAND3      | BRAND2               | BRAND1, BRAND2, BRAND3                  |
-| YANDEX MARKET       | YANDEX MARKET        | YANDEX MARKET (дубликат удалён)         |
+| Предыдущее значение (от других правил ADD) | Добавляемое значение | Результат после ADD                     |
+|-------------------------------------------|----------------------|-----------------------------------------|
+| ELECTRONICS                               | SMARTPHONES          | ELECTRONICS, SMARTPHONES                |
+| BRAND1, BRAND3                            | BRAND2               | BRAND1, BRAND2, BRAND3                  |
+| YANDEX MARKET                             | YANDEX MARKET        | YANDEX MARKET (дубликат удалён)         |
+
+> **Известное ограничение:** если REPLACE (`r`) и ADD (`a`) пишут в одну и ту
+> же колонку для одной и той же строки, то текущая реализация ADD
+> перезаписывает значение, записанное REPLACE — в колонке остаются только теги
+> ADD. Подробности и статус — в
+> [`docs/00-overview/open-questions.md`](docs/00-overview/open-questions.md) (D-2).
 
 ---
 
@@ -225,5 +237,23 @@ null_data_*.csv.gz
 * Использовать индексы (`index_column`) - колонка с `id` рекламы.
 
 ---
+
+## Документация / Documentation
+
+Full project documentation lives in [`docs/00-overview/`](docs/00-overview/):
+
+| Document | Contents |
+|---|---|
+| [`product-overview.md`](docs/00-overview/product-overview.md) | What the product is for, who uses it, owner-confirmed intent |
+| [`current-behavior.md`](docs/00-overview/current-behavior.md) | Entry points, main scenario step by step, rule engine, errors, configuration |
+| [`data-flow.md`](docs/00-overview/data-flow.md) | Input/output formats, transformations, handling of missing and invalid values |
+| [`architecture.md`](docs/00-overview/architecture.md) | Components, interactions, diagrams, technical risks |
+| [`open-questions.md`](docs/00-overview/open-questions.md) | Owner decisions, discrepancies, open questions |
+
+Start with `product-overview.md`; developers should then read
+`current-behavior.md` and `architecture.md`.
+
+---
+
 ✨ Чистых данных!
 ---

@@ -4,141 +4,157 @@ status: draft
 validated: no
 executor: auditor
 problems-only: true
+code_ref: "5c4bfdd"
+severity_taxonomy: "05-audit-config-templates.md#severity-taxonomy"
 ---
 
-# Phase 05 — Config Template Validation & Spec Conformance
+# Phase 05 — Config Template Validation
 
 ## Purpose
 
-Audits whether the bundled YAML templates — report definition files and default
-data-settings files — conform to the Pydantic v2 models that consume them, and
-whether the defaults-merge contract holds end to end. Report templates in
-`settings/reports/` are validated against `ReportSettings` → `PeriodModel` →
-`LastTimeModel`; default data templates in `settings/defaults/` are validated
-against `DataDefaults`. A merged dict of base defaults overlaid with report
-settings is then validated as a `Data` model before reaching the API call.
-Mismatches between template field names and model attributes, or between the
-declared schema and what the code actually reads, cause silent data loss or
-validation failures at runtime.
+Audits whether the two bundled YAML templates (`app_config.yaml`, `log_config.yaml`)
+conform to the Pydantic v2 models that consume them (`DataSettings` at
+`models.py:158`; `LoggingSettings` at `models.py:51`), carry types the downstream
+Polars reader/writer accepts, have a consistent `extra` policy, and match across
+template, model default, and code fallback.
 
-This file names what to examine and under which angle; the executing auditor
-discovers the concrete artifacts. Owned here: template-to-model conformance,
-field-name drift, template-key survival through the merge, and the extra-field policy of
-each model. Owned elsewhere: template distribution and credential sourcing
-(02); the data pipeline and export correctness (04); fixed-value enum
-discipline (10); import-time bootstrap (01).
+No network, no API, no merge overlay (`merge_dicts` dead — Phase 02). Load path:
+`get_app_service()` → `_require_settings()` (existence gate only, `app_service.py:307-322`) →
+`DataSettings(**yaml_to_dict(...))` (`app_service.py:47-52`), with
+`dictConfig(service.log_config.model_dump())` at `app_service.py:337`.
+`yaml_to_dict` (`utils.py:131-149`) returns `{}` on error, masking parse failures as
+"field required" downstream.
+
+**Scope:** template↔model↔Polars conformance, field-name drift, `extra`-policy
+consistency, default-value divergence, declared-vs-read liveness.
+**Out of scope:** template distribution (02); pipeline, export path & crash-safety (04);
+fixed-value enum discipline (10); import-time bootstrap & settings gate (01).
 
 ---
 
 ## Audit Blocks
 
 Each block is independent — execute any one with no knowledge of the others.
-Evidence is a class, not a check list: a static proof that a stated property
-does not hold, a reproduced validation error, or an observed silent pass; the
-method is the auditor's. A passing check is methodology, never a finding.
+Evidence is a class, not a check list: observed output, a reproduced behaviour,
+or a static proof that a stated property does not hold; the method is the
+auditor's. A passing check is methodology, never a finding.
 
-### 1. Template-to-Pydantic model conformance
+### 1. Template-to-model loading & validation fidelity
 
-Load every bundled YAML report template and every default data template and
-validate each against its target Pydantic model. Check whether validation errors
-name the specific key that failed, whether a template that fails can still be
-loaded by a lenient parser at runtime, and whether the failing templates share
-a common cause (e.g., field names in the template do not match the model
-attributes).
+Load each bundled template against its target model; determine whether a failure
+names the offending key or is masked by `extra` policy.
 
-Evidence: the pass/fail count per template type; one failing template with the
-exact error; the common cause behind all failures.
+- **Evidence:** both templates pass today (`app_service.py:50,44`); `log_config.yaml`
+  dump yields `root.handlers: ['console','rotating_file']` (`log_config.yaml:52-55`).
+- **Evidence (induced):** dropping `data_paths` → `ValidationError` naming `data_paths`
+  (fail-fast); bogus top-level key silently dropped — `DataSettings` has no `model_config`,
+  `extra` defaults to `"ignore"` (`models.py:158-164`).
+- **Evidence (gate):** malformed-but-present YAML passes `_require_settings` (existence
+  only, `app_service.py:307-322`), fails later as `ConfigError` (`app_service.py:51-52`)
+  because `yaml_to_dict` swallows the parse error as `{}` (`utils.py:131-149`).
+  Root cause Phase 02; Phase 05 owns the gate-vs-validate surface.
 
-### 2. Field-name drift between templates and models
+### 2. Field-name drift & extra-policy inconsistency
 
-Establish whether template field names match the Pydantic model attribute names
-exactly. Check whether a key present in a template (e.g., a period subtype
-field) is mapped to a different attribute name in the model, and whether
-`extra="forbid"` on a nested model causes validation to reject otherwise-valid
-data. Check whether `extra="allow"` on a parent model silently absorbs typos
-in fields that should be validated.
+Map every YAML key → model attribute (incl. nested `to_csv`/`from_csv`); audit the
+`extra` setting of every model in the chain.
 
-Evidence: the name-mismatch inventory; one template field silently absorbed by
-`extra="allow"`; the nested model whose `extra="forbid"` rejects a valid key.
+- `WorkingPaths` = `extra="forbid"` (`models.py:61`);
+- `DataFile` / `DataDict` / `Database` / `DictColumnsIndexes` /
+  `PolarsReadCSV` / `PolarsWriteCSV` = `extra="allow"` (`models.py:78,143,46,135,94,85`);
+- `DataSettings` / `LoggingSettings` = **unset** → Pydantic default `extra="ignore"`
+  (`models.py:51,158`).
+- **Evidence (absorbed typo):** `to_csv.chunk_sz` under `extra="allow"` silently absorbed →
+  consumer falls to its default (`csv_service.py:312`).
+- **Evidence (rejected key):** `extra="forbid"` on `WorkingPaths` rejects any key not in
+  `import_folder` / `export_folder` / `dict_file` / `db_file` (`models.py:63-67`).
 
-### 3. Period / last_time model conformance
+### 3. Reader/Writer parameter type conformance
 
-Establish whether the `PeriodModel` → `LastTimeModel` chain validates the
-template's period specification. Check whether `date_filter` and `last_time`
-are mutually exclusive when one is expected, whether `last_time`'s sub-fields
-(`time_unit`, `unit_count`, `include_current`) are all present and correctly
-typed, and whether a period that provides neither fails fast with a clear
-message.
+Whether each template value carries a type the downstream consumer (Polars) accepts.
 
-Evidence: the PeriodModel verdict for one template; one period with a missing
-required sub-field; the failure mode when neither field is supplied.
+- **Evidence (gap #2):** `infer_schema_length: False` (`app_config.yaml:36`) vs Polars
+  `int | None` (`models.py:102`). `False`→`0`→forces **all columns to `String`**.
+  Template comment still says "pandas" (`app_config.yaml:28` — stale).
+- **Evidence (bonus):** `compression` Literal `{gzip,bz2,zip,xz,zstd}` (`models.py:90`)
+  vs Polars `['uncompressed','gzip','zstd']` — `bz2` → `InvalidOperationError`
+  (`csv_service.py:358`); template uses `gzip` (safe).
+- **Evidence (gap #4):** `include_bom: True` (`app_config.yaml:43`) is not a declared field
+  of `PolarsWriteCSV` (`models.py:84-90`); absorbed by `extra="allow"`, survives `model_dump()`,
+  works only because Polars accepts the param — two implicit contracts.
 
-### 4. Template-field conformance within the merge
+### 4. Template↔model↔code default divergence
 
-Establish whether template keys survive the defaults-to-Data merge into the
-correct `Data` model fields. Check whether a key present in a template is mapped
-to the right attribute in the `Data` model after the overlay, and whether a
-missing default file produces a usable configuration or a crash.
+No overlay merge exists (`merge_dicts` dead — Phase 02); defaults layer three ways for
+`chunk_size`.
 
-Evidence: the merged `Data` for one report; one template key and its surviving
-field; one missing default file and its behaviour.
+- **Evidence:** model default `10000` (`models.py:89`), template `100000`
+  (`app_config.yaml:42`), code fallback `params.pop("chunk_size", 10000)` (`csv_service.py:312`).
+  Runtime dump shows `100000` (template wins) — the two `10000` literals are a divergent
+  second definition; omit `chunk_size` → model default `10000` wins (not code `100000`).
 
-### 5. Extra-field policy and silent absorption
+### 5. Extra-field policy & silent absorption
 
-Establish the `extra` configuration of each Pydantic model in the validation
-chain (`ReportSettings`, `PeriodModel`, `LastTimeModel`, `DataDefaults`,
-`Data`). Check whether a typoed or unknown key at any level is silently ignored
-(`extra="allow"` or `"ignore"`) or rejected (`extra="forbid"`), and whether a
-key that is silently absorbed was intended to be consumed.
+Per-model `extra` behaviour + concrete silent absorption.
 
-Evidence: per model — the `extra` setting; one unknown key silently absorbed;
-one consumed key that is silently dropped.
+- `WorkingPaths` = forbid; six nested models = allow; `DataSettings`/`LoggingSettings`
+  = ignore (`models.py:61,51,158`).
+- **Evidence (absent field absorbed):** `include_bom` (gap #4, `models.py:84-90`,
+  `app_config.yaml:43`) — not a `PolarsWriteCSV` field, carried by `extra="allow"`.
+- **Evidence (extra key dropped/substituted):** *extra* top-level key silently dropped by
+  `extra="ignore"` (gap #12); typoed `chunk_size` under `extra="allow"` absorbed → code
+  fallback `10000` used unseen (`csv_service.py:312`).
 
-### 6. Declared spec conformance against what the code reads
+### 6. Declared-vs-read conformance
 
-Establish whether every key that the data-preparation code reads from the
-merged `Data` model is actually present in the validated template. Check
-whether a comment or template key states a field that the code's strategy
-never consults, and whether a constant duplicated between templates and code
-has diverged.
+Which validated fields reach a consumer and which are declared-but-never-read.
 
-Evidence: the read key inventory; one template key never consulted by code;
-one duplicated value that disagrees.
+- **Evidence (read inventory):** `extension` → `CSVWorker._set_files_params` via
+  `model_dump().get("extension")` (`csv_service.py:61`); `col_indexes` → `MappingDict`
+  (`app_service.py:139`); `from_csv.*` → `pl.read_csv(**self.reader_settings)`
+  (`csv_service.py:81,154,206,215`); `to_csv.*` → `df.write_csv(**params)` (`csv_service.py:358`).
+- **Evidence (dead declared field):** `fts_separator` (`models.py:147`,
+  `app_config.yaml:16`) and `dict_file_settings.extension` have **zero** consumer
+  references. Owned by Phase 02; Phase 05 records the template declares what code never reads.
+- **Evidence (consumer reads under a different layer):** `chunk_size` via `model_dump().pop`
+  (`csv_service.py:312`); `index_column`/`date_column` (`str = None`, gap #1,
+  `models.py:80-81`) reach `DBWorker` target-table logic (`db_service.py:76-79`, cross-ref Phase 04).
 
 ---
 
 ## Severity Taxonomy
 
-Grade by **effect and blast radius**, not by mechanism name; rate what is true
-now, not the worst consequence if triggered.
+Grade by **effect and blast radius**, not mechanism name; rate what is true now. An
+empty band is a valid outcome — do not populate it with a hypothetical.
 
-- **CRITICAL** — a report template that fails validation so the report cannot
-  run at all, while a shipped example asserts it should work; a field-name
-  mismatch that silently drops a required API parameter (e.g., `date_filter` or
-  `kitId`), producing a report against the wrong data without error.
-- **HIGH** — `extra="allow"` silently absorbing a typoed field name that the
-  code never reads, so a misconfigured report runs with defaults the operator
-  did not intend; a defaults-merge that drops a subtype-specific override,
-  changing the data returned; a template that passes lenient parsing but fails
-  strict validation with no runtime fallback.
-- **MEDIUM** — a nested model with `extra="forbid"` that rejects a valid key
-  only in certain configurations, creating an inconsistent validation surface;
-  a duplicated constant (e.g., a kit ID or filter) between templates and code
-  that has not yet diverged.
-- **LOW** — documentation and drift with no runtime consequence today: a
-  comment in a template contradicting the field it describes; a template key
-  never consulted but harmlessly present; a default file with no consumer.
+- **CRITICAL** — a shipped template fails validation so the report cannot run while a test asserts it
+  should, or a value silently produces wrong output. *Empty today* — both templates validate.
+- **HIGH** — a config value silently absorbed/dropped so intent is unmet with no error, or a
+  malformed template passes the existence gate, surfacing only an opaque error. **Real
+  today (filed as TPL-001):** `yaml_to_dict` returns `{}` on YAML error, masking the cause
+  as "field required" `ConfigError` (gap #5, `utils.py:131-149`). *Related, not filed:*
+  bogus top-level key silently dropped by `extra="ignore"` (gap #12, TPL-005).
+- **MEDIUM** — model accepts a value the downstream consumer rejects or treats differently.
+  **Real today:** `infer_schema_length: bool` vs Polars `int | None` → all-`String` (gap #2,
+  `models.py:102`, `app_config.yaml:36`); `compression` broader than Polars (bonus, `models.py:90`);
+  `include_bom` undeclared & absorbed by `extra="allow"` (gap #4); `extra`-policy inconsistency
+  (gap #7, `models.py:61,158,51`); `chunk_size` 3-site divergence (gap #3, `models.py:89`,
+  `csv_service.py:312`).
+- **LOW** — doc/cosmetic drift, cross-referenced to owning phase: duplicate enum alias
+  `csv`≡`default` (gap #11, `models.py:72-73`, Phase 10); stale "pandas" comment
+  (`app_config.yaml:28`, Phase 10); `__main__` logger dead config (`log_config.yaml:45`, Phase 02);
+  `fts_separator`/`dict_file_settings.extension` declared-but-unread (Phase 02); `DataFile str=None`
+  (`models.py:80-81`, Phase 10).
 
 ## Report Output
 
 - Findings path: `.ai/audit/05-config-templates/findings.md`
-- Template: `.ai/audit/templates/audit-findings.md` — follow it for front
-  matter, summary, findings, distribution, cross-finding analysis, roadmap,
-  rollout safety, appendices
+- Template: `.ai/audit/templates/audit-findings.md` — follow it for front matter,
+  summary, findings, distribution, cross-finding analysis, roadmap, rollout safety,
+  appendices. Front matter carries `code_ref` + `severity_taxonomy` (once, not per finding).
 - Finding-ID prefix: `TPL-`
 - Incremental append, ≤100 lines per pass
-- `problems-only: true` — findings only, omit passing checks; every finding
-  needs a static proof or a reproduced validation error and the exact consequence
-- Empty state, exactly: `No problems found in this phase.`
-- If a shipped test asserts the current behaviour as intended, still file the
-  finding and record the test as a remediation blocker
+- `problems-only: true` — findings only; every finding needs a static proof or
+  reproduced error plus the exact consequence. Empty state: `No problems found in this phase.`
+- If a shipped test asserts the current behaviour as intended, still file the finding
+  and record the test as a remediation blocker.
