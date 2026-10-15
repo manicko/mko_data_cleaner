@@ -3,6 +3,7 @@ import logging.config
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
+from time import perf_counter
 
 import mko_data_cleaner.core.utils as utils
 from mko_data_cleaner.core.csv_service import CSVWorker
@@ -13,7 +14,12 @@ from mko_data_cleaner.core.errors import (
     DataValidationError,
     SettingsNotInitializedError,
 )
-from mko_data_cleaner.core.models import DataSettings, LoggingSettings, MappingColumns
+from mko_data_cleaner.core.models import (
+    DataSettings,
+    LoggingSettings,
+    MappingColumns,
+    ReportResult,
+)
 from mko_data_cleaner.core.paths import (
     APP_DIR,
     APP_NAME,
@@ -82,7 +88,7 @@ class AppService:
                 handler["filename"] = file_path
 
     @staticmethod
-    def _import_data(db_worker, csv_worker):
+    def _import_data(db_worker, csv_worker) -> int:
         rows_count = 0
         col_count = len(csv_worker.source_headers)
 
@@ -99,9 +105,11 @@ class AppService:
         logger.info(f"{rows_count:,} rows were loaded to data table")
 
         db_worker.update_index_from_data()
+        return rows_count
 
-    def run_report(self, data_path: str | Path):
+    def run_report(self, data_path: str | Path) -> ReportResult:
         start_time = datetime.now().replace(microsecond=0)
+        t_start = perf_counter()
         print(
             f"\n{'-' * 10}  Обработка стартовала: {start_time} {'-' * 10}\n",
             flush=True,
@@ -109,6 +117,11 @@ class AppService:
         self.base_path = data_path
         self.resolver.ensure_file_parent(self.db_path)
         self.resolver.ensure_dir(self.export_path)
+
+        rows_loaded = 0
+        rows_exported = 0
+        null_data_files: list[Path] = []
+        timings: dict[str, float] = {}
 
         csv_worker = CSVWorker(
             data_path=self.import_path,
@@ -159,9 +172,12 @@ class AppService:
                 db_worker.link_search_table()
 
             # loading data to database
-            self._import_data(db_worker, csv_worker)
+            t_import = perf_counter()
+            rows_loaded = self._import_data(db_worker, csv_worker)
+            timings["import"] = perf_counter() - t_import
 
             # importing fts rules to db
+            t_mapping = perf_counter()
             if not mapping_dict.fts_data.is_empty():
                 mapping_dict.fts_data.select(
                     [
@@ -222,6 +238,8 @@ class AppService:
                     separator=self.app_config.dict_file_settings.add_separator,
                 )
 
+            timings["mapping"] = perf_counter() - t_mapping
+
             # checking non mapped data
             db_worker.build_non_mapped()
 
@@ -231,9 +249,11 @@ class AppService:
                 export_path=f"{self.base_path}",
                 data_table=db_worker.non_mapped_table,
             )
+            null_data_files = sorted(self.base_path.glob("null_data_*"))
 
             # synchronizing and exporting
 
+            t_export = perf_counter()
             print(
                 "Synchronizing the index table with the data table is in progress. "
                 "Please be patient, this may take some time.",
@@ -241,17 +261,32 @@ class AppService:
             )
             db_worker.sync_with_data_table()
 
-            csv_worker.export_sql_to_csv(
+            rows_exported = csv_worker.export_sql_to_csv(
                 db_con=db_worker.db_con,
                 data_table=db_worker.data_tbl_name,
                 export_path=self.export_path,
             )
+            timings["export"] = perf_counter() - t_export
 
         end_time = datetime.now().replace(microsecond=0)
         print(
             f"\n{'-' * 10}  Обработка завершена: {end_time}. "
             f"Общее время: {end_time - start_time} {'-' * 10}\n",
             flush=True,
+        )
+
+        return ReportResult(
+            report_dir=self.base_path,
+            import_dir=self.import_path,
+            export_dir=self.export_path,
+            db_path=self.db_path,
+            null_data_files=null_data_files,
+            started_at=start_time,
+            finished_at=end_time,
+            duration=perf_counter() - t_start,
+            timings=timings,
+            rows_loaded=rows_loaded,
+            rows_exported=rows_exported,
         )
 
 

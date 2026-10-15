@@ -1,7 +1,7 @@
 import shutil
 from pathlib import Path
 
-from mko_data_cleaner.core.paths import APP_PATHS
+from mko_data_cleaner.core.paths import APP_DIR, APP_NAME, APP_PATHS, AppPaths
 
 
 def _copy_templates(destination: Path, force: bool = False) -> None:
@@ -27,19 +27,30 @@ def _copy_templates(destination: Path, force: bool = False) -> None:
         shutil.copy2(item, target_path)
 
 
-def init_project(force: bool = False) -> Path:
+def init_project(force: bool = False, settings_dir: Path | None = None) -> Path:
     """
     Initialize configuration directory with default templates.
 
     Args:
         force: Overwrite existing files.
+        settings_dir: Optional user base directory. When provided,
+            settings are written to ``settings_dir / "settings"``
+            instead of the platformdirs-default location.
 
     Returns:
-        Path to created config directory.
+        Path to the directory where settings were written.
     """
 
-    _copy_templates(APP_PATHS.user_settings_dir, force)
-    return APP_PATHS.user_settings_dir
+    if settings_dir is None:
+        user_settings_dir = APP_PATHS.user_settings_dir
+    else:
+        app_paths = AppPaths(
+            app_dir=APP_DIR, app_name=APP_NAME, user_dir=Path(settings_dir)
+        )
+        user_settings_dir = app_paths.user_settings_dir
+
+    _copy_templates(user_settings_dir, force)
+    return user_settings_dir
 
 
 if __name__ == "__main__":

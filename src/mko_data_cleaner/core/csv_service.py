@@ -272,7 +272,7 @@ class CSVWorker:
         data_table: str,
         file_prefix: str | None = None,
         export_path: Path | str | None = None,
-    ):
+    ) -> int:
         """
         Export SQLite table to CSV files using Polars.
 
@@ -293,7 +293,9 @@ class CSVWorker:
 
         Returns
         -------
-        None
+        int
+            Number of rows exported (``total_rows`` from ``SELECT COUNT(*)``)
+            or ``0`` when the table is empty.
         """
 
         logger.debug(f"Starting export from {data_table}")
@@ -331,7 +333,7 @@ class CSVWorker:
 
             if total_rows == 0:
                 logger.debug(f"Table {data_table} is empty.")
-                return
+                return 0
 
             rows = data_cursor.fetchmany(max_rows)
 
@@ -366,6 +368,7 @@ class CSVWorker:
             logger.debug(
                 f"Successfully exported {row_counter:,} rows from table '{data_table}'"
             )
+            return total_rows
 
         except Exception as err:
             logger.error(traceback.format_exc())

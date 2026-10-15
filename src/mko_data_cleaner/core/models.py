@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import codecs
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -161,3 +162,34 @@ class DataSettings(BaseModel):
     database_settings: Database
     read_settings: ReadCSV
     export_settings: WriteCSV
+
+
+# --- Report Result
+
+
+class ReportResult(BaseModel):
+    """Structured result of a data-cleaning report run.
+
+    Returned by ``process_data`` / ``AppService.run_report`` so that
+    Jupyter/pipeline callers can inspect outputs and metrics without
+    parsing CLI strings or globbing the filesystem.
+    """
+
+    # --- output paths ---
+    report_dir: Path
+    import_dir: Path
+    export_dir: Path
+    db_path: Path
+    null_data_files: list[Path]
+
+    # --- timing ---
+    started_at: datetime
+    finished_at: datetime
+    duration: float  # total seconds (wall clock)
+
+    # --- per-stage timings (seconds) ---
+    timings: dict[str, float]
+
+    # --- row counts ---
+    rows_loaded: int
+    rows_exported: int

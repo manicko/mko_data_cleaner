@@ -11,6 +11,7 @@ from rich.console import Console
 
 from mko_data_cleaner.core.app_service import build_app_paths, get_app_service
 from mko_data_cleaner.core.init_service import init_project
+from mko_data_cleaner.core.models import ReportResult
 from mko_data_cleaner.core.utils import list_files_in_directory
 
 sys.stdout.reconfigure(line_buffering=True)
@@ -27,10 +28,19 @@ app = typer.Typer(
 def init(
     force: bool = typer.Option(
         False, "--force", "-f", help="Перезаписать существующие файлы"
-    )
+    ),
+    settings_dir: Annotated[
+        Path | None,
+        typer.Option(
+            exists=False,
+            file_okay=False,
+            dir_okay=True,
+            help="User settings directory (default: system config dir)",
+        ),
+    ] = None,
 ):
     """Инициализировать пользовательские настройки"""
-    path = init_project(force=force)
+    path = init_project(force=force, settings_dir=settings_dir)
     console.print(f"[green]✅ Настройки инициализированы:[/green] {path}")
 
 
@@ -60,8 +70,12 @@ def run(
     service = get_app_service(settings_dir)
 
     try:
-        service.run_report(report)
-        console.print("[green]✅ Отчёт успешно завершён[/green]")
+        result = service.run_report(report)
+        console.print(
+            f"[green]✅ Report complete:[/green] "
+            f"{result.rows_loaded:,} loaded → {result.rows_exported:,} clean "
+            f"({result.duration:.1f}s) ↠ {result.export_dir}"
+        )
 
     except Exception as e:
         console.print(f"[red]❌ Ошибка:[/red] {e}")
@@ -102,7 +116,9 @@ def list_settings(
 
 
 # Public API
-def process_data(report_path: str | Path, settings_dir: Path | None = None) -> None:
+def process_data(
+    report_path: str | Path, settings_dir: Path | None = None
+) -> ReportResult:
     """
     Run the data-cleaning report for the given directory.
 
@@ -111,20 +127,20 @@ def process_data(report_path: str | Path, settings_dir: Path | None = None) -> N
     User settings are loaded lazily via the factory; if ``app_config.yaml`` or
     ``log_config.yaml`` are missing, :class:`SettingsNotInitializedError`
     (a subclass of ``FileNotFoundError``) is raised.
+
+    Returns:
+        :class:`~mko_data_cleaner.core.models.ReportResult` with output
+        paths, timings, and row counts.
     """
     path = Path(report_path)
     if not path.is_dir():
         raise FileNotFoundError(f"Directory not found: {path}")
-    get_app_service(settings_dir).run_report(path)
+    return get_app_service(settings_dir).run_report(path)
 
 
 def initialize_settings(force: bool = False, settings_dir: Path | None = None) -> Path:
     """Initialize user settings with default templates (Jupyter/Airflow entry point)."""
-    # NOTE: ``settings_dir`` is accepted for API symmetry but is not yet
-    # forwarded to ``init_project``, which currently hardcodes
-    # ``APP_PATHS.user_settings_dir``. Threading ``settings_dir`` through
-    # ``init_project`` is completed in a later task (B4/T4).
-    return init_project(force=force)
+    return init_project(force=force, settings_dir=settings_dir)
 
 
 if __name__ == "__main__":
