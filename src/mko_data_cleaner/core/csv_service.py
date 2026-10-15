@@ -167,17 +167,17 @@ class CSVWorker:
         Generator[pl.DataFrame]
         """
         try:
-            df = pl.read_csv_batched(
+            # polars 2.0 removed `read_csv_batched` and `next_batches`; use
+            # `scan_csv().collect_batches()` which is version-agnostic and works
+            # identically on polars 1.38.1 and 2.0.0.
+            reader = pl.scan_csv(
                 csv_file,
-                batch_size=self.CHUNK_SIZE,
                 new_columns=headers,
                 **self.reader_settings,
             )
-            while True:
-                batches = df.next_batches(1)
-                if not batches:
-                    break
-                yield batches[0]
+            # collect_batches() may surface CSV errors lazily; iterate it inside
+            # the try/except so a malformed/partial file is surfaced consistently.
+            yield from reader.collect_batches(chunk_size=self.CHUNK_SIZE)
 
         except Exception as err:
             logger.error(traceback.format_exc())
