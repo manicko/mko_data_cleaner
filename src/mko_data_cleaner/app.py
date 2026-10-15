@@ -1,5 +1,5 @@
 """
-mko_get_mediascope_data — основной публичный интерфейс
+mko_data_cleaner — основной публичный интерфейс
 """
 
 import sys

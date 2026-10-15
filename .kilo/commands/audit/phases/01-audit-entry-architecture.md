@@ -14,7 +14,7 @@ A reusable handbook for auditing the **entry surfaces and startup topology** of 
 standalone async CLI tool and Python library that fetches data from the Mediascope
 API. Three entry surfaces exist: the Typer CLI (`init`, `run`, `list_reports`),
 the library API (`run_report`, `run_report_async`, `initialize_settings`), and
-the module entry (`python -m mko_get_mediascope_data`). There is no long-lived
+the module entry (`python -m mko_data_cleaner`). There is no long-lived
 server process — each invocation is one-shot — but the singleton `app_service`
 instantiates at import time and performs configuration loading and logging
 configuration as side effects.

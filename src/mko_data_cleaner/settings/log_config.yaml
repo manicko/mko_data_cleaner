@@ -47,16 +47,6 @@
       "handlers": [ "rotating_file" ],
       "level": "INFO",
       "propagate": False
-    },
-    "tests": {
-      "level": "INFO",
-      "handlers": [ "rotating_file" ],
-      "propagate": False
-    },
-    "telebot": {
-      "level": "INFO",
-      "handlers": [ "console", "rotating_file" ],
-      "propagate": False
     }
   },
   "root": {

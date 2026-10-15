@@ -13,7 +13,7 @@ problems-only: true
 Audit how configuration and credentials are declared, resolved, validated, and
 kept separate in a standalone async CLI tool that fetches data from the
 Mediascope API. Bundled YAML templates live in the package `settings/` tree and
-are copied to the user config directory (`~/.config/mko_get_mediascope_data/`)
+are copied to the user config directory (`~/.config/mko_data_cleaner/`)
 by the `init` command. All loaded configuration is validated through Pydantic
 v2 models before use. The Mediascope API credential is a JSON file in
 `connections/`.
