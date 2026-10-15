@@ -25,7 +25,7 @@
   'database_settings': {
     'table_name': 'data_table'
   },
-  'read_settings': { # general settings for pandas CSV reader
+  'read_settings': { # general settings for polars CSV reader
     "from_csv": {
       "separator": ";",
       "encoding": "utf8",

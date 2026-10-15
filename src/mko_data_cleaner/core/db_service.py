@@ -5,7 +5,6 @@ import sqlite3
 import traceback
 from functools import cached_property
 from pathlib import Path
-from typing import Any
 
 import adbc_driver_sqlite.dbapi as adb
 
@@ -20,13 +19,6 @@ MASTER_TABLE = "sqlite_master"
 
 # # Data types used to add columns in SQLight data table
 VALID_COLUMN_DTYPES = ("TEXT", "NUMERIC", "INTEGER", "REAL", "BLOB")
-
-DATA_TO_SQL_PARAMS = {
-    "if_exists": "append",
-    "index": False,
-    "index_label": None,
-    "chunksize": 2000,
-}
 
 
 def _ensure_pyarrow_importable() -> None:
@@ -526,27 +518,6 @@ class DBWorker:
             self.perform_query(q_trigger)
 
         logger.debug(f"Search triggers were successfully created for '{search_tbl}' ")
-
-    # ---------------------------------------------------------
-    # Data import
-    # ---------------------------------------------------------
-
-    def data_chunk_to_sql(
-        self, chunk, data_table, sql_loader_settings: dict[str, Any] = None
-    ) -> int:
-        """
-        :param data_table:
-        :param chunk: chunk of data as Panda's object
-        :param sql_loader_settings:use to extend or override global CSV_READ_PARAMS
-            for details refer to pandas to_sql settings
-        :return: int, number of rows loaded to database
-        """
-        if sql_loader_settings is None:
-            sql_loader_settings = DATA_TO_SQL_PARAMS
-        chunk.to_sql(
-            **sql_loader_settings, name=data_table, con=self.db_con
-        )  # load data
-        return chunk.shape[0]
 
     # ---------------------------------------------------------
     # Mapping - tables
