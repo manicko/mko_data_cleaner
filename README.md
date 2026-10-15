@@ -62,23 +62,73 @@ mko_data_cleaner/
 **Рекомендуемый способ (Python):**
 
 ```python
-from mko_data_cleaner.app import process_data
+from mko_data_cleaner import initialize_settings, process_data
 
-process_data(r"data\mvideo")
+# 1. Инициализировать настройки один раз. Параметр settings_dir опционален —
+#    по умолчанию используется системный каталог platformdirs (внутри него
+#    создаётся settings/). Возвращает путь к каталогу с app_config.yaml и
+#    log_config.yaml — запомните его и передайте дальше в process_data.
+settings_dir = initialize_settings()  # initialize_settings(settings_dir=Path(...))
+
+# 2. Запустить обработку. process_data() возвращает ReportResult.
+result = process_data(r"data\mvideo", settings_dir=settings_dir)
 ```
 
-**Альтернатива через core:**
+Параметр `settings_dir` (опциональный) есть и у `initialize_settings()`, и у
+`process_data()`; по умолчанию — системный каталог `platformdirs`.
 
-```python
-from mko_data_cleaner.core.app_service import app_service
+`process_data()` возвращает объект `ReportResult` со следующими полями:
 
-app_service.run_report(r"data\mvideo")
-```
+| Поле              | Описание                                                              |
+|-------------------|-------------------------------------------------------------------------|
+| `report_dir`      | Корневая директория отчёта (`base_path`).                               |
+| `import_dir`      | Директория загрузки (`raw_data` из конфига).                            |
+| `export_dir`      | Директория экспорта (`clean_data` из конфига).                          |
+| `db_path`         | Путь к временной SQLite-базе.                                           |
+| `null_data_files` | Список `null_data_*.csv.gz` — строки без совпадений по словарю.         |
+| `started_at`      | Время начала (`datetime`).                                              |
+| `finished_at`     | Время окончания (`datetime`).                                           |
+| `duration`        | Полное время выполнения в секундах (`float`).                           |
+| `timings`         | Тайминги по стадиям: `{import, mapping, export}`, сек.                 |
+| `rows_loaded`     | Количество загруженных строк.                                           |
+| `rows_exported`   | Количество строк в экспорте.                                            |
+
+> **Важно:** `process_data()` загружает настройки лениво. Если `initialize_settings()`
+> не вызван (или `settings_dir` указывает в пустой каталог), выбрасывается
+> `SettingsNotInitializedError` — подкласс `FileNotFoundError`. Сообщение об ошибке
+> именует `mko_data_cleaner.app.initialize_settings()` как способ исправить ошибку.
 
 **Через CLI:**
 
 ```bash
+# настройки в системном каталоге (по умолчанию)
+mko-data-cleaner init                     # создать настройки
+mko-data-cleaner init --force             # перезаписать существующие
 mko-data-cleaner run path/to/your_report_folder
+mko-data-cleaner list-settings
+
+# явный каталог настроек (переопределяет системный)
+mko-data-cleaner init --settings-dir C:\my\settings
+mko-data-cleaner run --settings-dir C:\my\settings path/to/your_report_folder
+mko-data-cleaner list-settings --settings-dir C:\my\settings
+```
+
+Опция `--settings-dir DIRECTORY` есть у команд `init`, `run` и `list-settings`.
+Она переопределяет каталог пользовательских настроек: по умолчанию используется
+системный каталог `platformdirs` (внутри него создаётся `settings/` с
+`app_config.yaml` и `log_config.yaml`).
+
+### 4. Пример ноутбука (Jupyter)
+
+Готовый runnable‑пример, демонстрирующий полный цикл
+`initialize_settings → process_data → ReportResult`:
+[`examples/notebooks/mko_data_cleaner_pipeline_example.ipynb`](examples/notebooks/mko_data_cleaner_pipeline_example.ipynb)
+(создаёт синтетический отчёт в‑cell и разбирает результат).
+
+Установить pinned‑релиз (тег `v0.1.0`):
+
+```
+%pip install "git+https://github.com/manicko/mko_data_cleaner.git@v0.1.0"
 ```
 
 ---
