@@ -222,6 +222,55 @@ def test_create_search_table(db_worker):
     assert fts_table in all_tables
 
 
+def test_fts5_triggers_sync_after_mutation(db_worker):
+    """FTS5 triggers must keep the virtual table in sync after INSERT/UPDATE/DELETE.
+
+    Extends test_create_search_table (TST-005): instead of only checking
+    FTS table existence, this test mutates the source (index) table and
+    verifies via MATCH queries that the FTS index reflects inserts,
+    updates, and deletes.
+    """
+    db_worker.set_data_tbl_columns("id", "col1", "col2", extra_cols=["extra_tag"])
+    db_worker.index_column = "id"
+    db_worker.search_columns = ["col1", "col2"]
+    db_worker.create_table_with_index()
+    db_worker.link_search_table()
+
+    target = db_worker._index_tbl_name
+    fts_table = db_worker._fts_table_name
+    assert fts_table is not None
+
+    insert_q = f"INSERT INTO {target} (id, col1, col2, extra_tag) VALUES (?, ?, ?, ?)"
+
+    # 1. INSERT — FTS should reflect it
+    db_worker.perform_query(insert_q, ("r1", "hello", "foo", None))
+    result = db_worker.perform_query(
+        f"SELECT rowid FROM {fts_table} WHERE {fts_table} MATCH 'hello'"
+    ).fetchall()
+    assert len(result) == 1
+
+    # 2. UPDATE searchable column — old value removed, new value indexed
+    db_worker.perform_query(
+        f"UPDATE {target} SET col1 = ? WHERE id = ?",
+        ("goodbye", "r1"),
+    )
+    result = db_worker.perform_query(
+        f"SELECT rowid FROM {fts_table} WHERE {fts_table} MATCH 'hello'"
+    ).fetchall()
+    assert len(result) == 0
+    result = db_worker.perform_query(
+        f"SELECT rowid FROM {fts_table} WHERE {fts_table} MATCH 'goodbye'"
+    ).fetchall()
+    assert len(result) == 1
+
+    # 3. DELETE — FTS entry removed
+    db_worker.perform_query(f"DELETE FROM {target} WHERE id = ?", ("r1",))
+    result = db_worker.perform_query(
+        f"SELECT rowid FROM {fts_table} WHERE {fts_table} MATCH 'goodbye'"
+    ).fetchall()
+    assert len(result) == 0
+
+
 # --------------------------------------------------------------------------- #
 # PyArrow installation guard (robustness for the ADBC write path)
 # --------------------------------------------------------------------------- #
