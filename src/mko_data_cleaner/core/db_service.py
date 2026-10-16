@@ -236,9 +236,18 @@ class DBWorker:
 
     def drop_table(self, table_name) -> bool:
         """
-        Drop table from current database
+        Drop table from current database.
+
+        Uses ``DROP TABLE IF EXISTS``, which always succeeds — no error is
+        raised when the table does not exist. Consequently the return value
+        is ``True`` whenever the query executes without error; ``False`` is
+        returned only on ``sqlite3.Error``. Callers needing to distinguish
+        "dropped" from "did not exist" should use ``tbl_exists`` before or
+        after calling.
+
         :param table_name: str, name of a table to be dropped
-        :return: bool, drop status True or False as value
+        :return: bool, True on success (including when the table did not
+                 exist), False on sqlite3.Error
         """
         query = f"DROP TABLE IF EXISTS {table_name}"
         try:

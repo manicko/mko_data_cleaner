@@ -22,10 +22,26 @@ def test_add_column(db_worker):
 
 
 def test_drop_table(db_worker):
+    """Drop an existing table and verify it is gone from the database."""
     db_worker.create_table("test_table", "col1")
     assert db_worker.tbl_exists("test_table")
-    db_worker.drop_table("test_table")
+
+    result = db_worker.drop_table("test_table")
+    # DROP TABLE IF EXISTS always succeeds → True even if table existed
+    assert result is True
     assert not db_worker.tbl_exists("test_table")
+
+
+def test_drop_table_nonexistent_returns_true(db_worker):
+    """``drop_table`` returns True even for a non-existent table.
+
+    ``DROP TABLE IF EXISTS`` always succeeds. The boolean return cannot
+    distinguish "dropped" from "did not exist" — use ``tbl_exists`` for
+    that check. (TST-011)
+    """
+    result = db_worker.drop_table("does_not_exist")
+    assert result is True
+    assert not db_worker.tbl_exists("does_not_exist")
 
 
 def test_create_table_with_index_realistic(db_worker):
@@ -164,7 +180,12 @@ def test_add_columns(db_worker):
 
 
 def test_drop_tables(db_worker):
-    """Покрывает массовое удаление таблиц + возврат словаря статусов."""
+    """Covers bulk table deletion and return status dict.
+
+    ``DROP TABLE IF EXISTS`` always succeeds, so ``drop_table`` returns
+    True for every table — including non-existent ones. ``tbl_exists`` is
+    the real correctness check, not the boolean return.
+    """
     db_worker.create_table("t1", "col1")
     db_worker.create_table("t2", "col1")
     result = db_worker.drop_tables("t1", "t2", "non_existent")
