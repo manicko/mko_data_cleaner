@@ -46,8 +46,8 @@ def test_drop_table_nonexistent_returns_true(db_worker):
 
 def test_create_table_with_index_realistic(db_worker):
     """
-    Реалистичный тест создания таблиц с использованием колонок из реального конфига.
-    Проверяет весь путь: set_data_tbl_columns → search_columns → create_table_with_index.
+    Realistic test of table creation using columns from the real config.
+    Tests the full path: set_data_tbl_columns → search_columns → create_table_with_index.
     """
     main_columns = [
         "AdId",
@@ -61,12 +61,12 @@ def test_create_table_with_index_realistic(db_worker):
 
     db_worker.set_data_tbl_columns(*main_columns, extra_cols=extra_columns)
 
-    # Ключевой момент: search_columns должны быть подмножеством основных колонок
+    # Key point: search_columns must be a subset of the main columns
     db_worker.search_columns = ["brand", "channelName", "programName"]
 
     db_worker.create_table_with_index()
 
-    # Основные утверждения
+    # Core assertions
     assert db_worker.tbl_exists(db_worker.data_tbl_name)
     assert db_worker.tbl_exists(db_worker._index_tbl_name)
 
@@ -75,14 +75,14 @@ def test_create_table_with_index_realistic(db_worker):
     assert "brand_normalized" in columns
     assert len(columns) == len(main_columns) + len(extra_columns)
 
-    # Проверка, что индексная таблица содержит нужные колонки
+    # Verify the index table contains the expected columns
     index_columns = db_worker.get_table_columns(db_worker._index_tbl_name)
     assert "AdId" in index_columns
     assert "brand" in index_columns
 
 
 def test_perform_query(db_worker):
-    """Покрывает основной метод выполнения SQL (используется везде)."""
+    """Covers the core SQL execution method (used everywhere)."""
     db_worker.create_table("new_test_table", "col1")
     insert_q = "INSERT INTO new_test_table (col1) VALUES (?)"
     db_worker.perform_query(insert_q, ("test_value",))
@@ -96,22 +96,22 @@ def test_perform_query(db_worker):
 
 
 def test_tbl_exist(db_worker):
-    """Явный тест проверки существования таблицы."""
+    """Explicit test for table existence check."""
     db_worker.create_table("exist_table", "col1")
     assert db_worker.tbl_exists("exist_table")
     assert not db_worker.tbl_exists("non_existent_table")
 
 
 def test_set_data_tbl_columns(db_worker):
-    """Покрывает установку колонок и extra_columns с автоматической валидацией и очисткой имён."""
-    # 1. Нормальный случай
+    """Covers setting columns and extra_columns with automatic validation and name cleaning."""
+    # 1. Normal case
     db_worker.set_data_tbl_columns(
         "id", "name", "value", extra_cols=["tag", "category"]
     )
     assert db_worker.data_tbl_columns == ["id", "name", "value", "tag", "category"]
     assert db_worker.extra_columns == ["tag", "category"]
 
-    # 2. "Грязные" имена → проверяем реальное поведение clean_names + make_valid
+    # 2. "Dirty" names → verify actual clean_names + make_valid behavior
     db_worker.set_data_tbl_columns(
         "wrong column!",  # → wrongcolumn
         "Неправильно с пробелами",  # → Nepravilnosprobelami
@@ -121,11 +121,11 @@ def test_set_data_tbl_columns(db_worker):
             "1 starts with digit",  # → 1startswithdigit
             " leading space",  # → leadingspace
             "tag",  # → tag
-            "duplicate_tag",  # → duplicate_tag (дубликат → duplicate_tag_1 не создаётся, т.к. "tag" уже есть)
+            "duplicate_tag",  # → duplicate_tag (duplicate → duplicate_tag_1 NOT created, since "tag" already exists)
         ],
     )
 
-    # Реальный результат после clean_names
+    # Actual result after clean_names
     expected_columns = [
         "wrongcolumn",
         "Nepravilnosprobelami",
@@ -157,14 +157,14 @@ def test_set_data_tbl_columns_empty_extra_cols(db_worker):
 
 
 def test_search_columns_setter(db_worker):
-    """Покрывает setter search_columns (фильтрация по существующим колонкам)."""
+    """Covers the search_columns setter (filtering by existing columns)."""
     db_worker.set_data_tbl_columns("col1", "col2", "col3")
     db_worker.search_columns = ["col1", "col3", "invalid_col"]
     assert db_worker.search_columns == ["col1", "col3"]
 
 
 def test_column_index_and_get_col_names(db_worker):
-    """Покрывает cached_property column_index и get_col_names."""
+    """Covers cached_property column_index and get_col_names."""
     db_worker.set_data_tbl_columns("id", "name", "value")
     assert db_worker.column_index == {0: "id", 1: "name", 2: "value"}
     assert db_worker.get_col_names(1) == "name"
@@ -172,7 +172,7 @@ def test_column_index_and_get_col_names(db_worker):
 
 
 def test_add_columns(db_worker):
-    """Покрывает массовое добавление колонок разных типов."""
+    """Covers bulk addition of columns of different types."""
     db_worker.create_table("test_table", "col1")
     db_worker.add_columns("test_table", col2="TEXT", col3="INTEGER", col4="REAL")
     columns = db_worker.get_table_columns("test_table")
@@ -197,7 +197,7 @@ def test_drop_tables(db_worker):
 
 
 def test_get_table_columns(db_worker):
-    """Покрывает получение списка колонок таблицы."""
+    """Covers retrieval of the table column list."""
     db_worker.create_table("test_table", "id", "name", "value")
     cols = db_worker.get_table_columns("test_table")
     assert cols == ["id", "name", "value"]
@@ -205,10 +205,10 @@ def test_get_table_columns(db_worker):
 
 def test_create_search_table(db_worker):
     """
-    Проверка create_search_table():
-    - создаётся основная таблица
-    - создаётся индексная таблица
-    - создаётся FTS5 таблица
+    Test of create_search_table():
+    - main table is created
+    - index table is created
+    - FTS5 table is created
     """
 
     db_worker.set_data_tbl_columns("id", "col1", "col2", extra_cols=["extra_tag"])
@@ -217,10 +217,10 @@ def test_create_search_table(db_worker):
     db_worker.create_table_with_index()
     db_worker.link_search_table()
 
-    # 1️ основная таблица
+    # 1️ main table
     assert db_worker.tbl_exists(db_worker.data_tbl_name)
 
-    # 2️ индексная таблица
+    # 2️ index table
     index_table = f"{db_worker.data_tbl_name}_distinct"
 
     tables = db_worker.perform_query(
@@ -231,7 +231,7 @@ def test_create_search_table(db_worker):
 
     assert index_table in temp_tables
 
-    # 3️ FTS таблица
+    # 3️ FTS table
     fts_table = f"{index_table}_fts"
 
     fts_tables = db_worker.perform_query(
