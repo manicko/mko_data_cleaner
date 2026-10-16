@@ -14,8 +14,8 @@ referenced or required) and runs the full clean → map → export cycle.
 - The package itself. Choose one:
   - From a **clean kernel**, the notebook's install cell installs the pinned
     release tag:
-    `%pip install "git+https://github.com/manicko/mko_data_cleaner.git@v0.1.0"`
-    (the `v0.1.0` tag is cut in a later release step; until then use the local
+    `%pip install "git+https://github.com/manicko/mko_data_cleaner.git@v0.2.0"`
+    (the `v0.2.0` tag is cut in a later release step; until then use the local
     install below).
   - **Local dev install** (no network needed): from the repo root,
     `uv sync` installs the project (editable) plus notebook tooling
@@ -34,7 +34,7 @@ referenced or required) and runs the full clean → map → export cycle.
 | # | Type | Tag | Purpose |
 |---|------|-----|---------|
 | 1 | markdown | | Title + purpose + prerequisites |
-| 2 | code | `install` | Import-guard `%pip install ...@v0.1.0` (no-op in dev venv) |
+| 2 | code | `install` | Import-guard `%pip install ...@v0.2.0` (no-op in dev venv) |
 | 3 | markdown | | "Import the library and public API" |
 | 4 | code | | Imports + `__version__` + `process_data` docstring |
 | 5 | markdown | | "Initialize settings" |
@@ -118,7 +118,7 @@ Null-data extract (`null_data_*.csv.gz`) — 2 rows (`BRANDS;tag`): `Orange;null
 
 ## Troubleshooting
 
-- **`v0.1.0` tag not found.** The install cell pins `git+...@v0.1.0`, which is
+- **`v0.2.0` tag not found.** The install cell pins `git+...@v0.2.0`, which is
   only cut in a later release step. Until then, use the local dev install
   (`uv sync`) and run the notebook in that environment — the import guard makes
   the install cell a no-op.

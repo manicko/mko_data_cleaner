@@ -116,7 +116,7 @@ constraints were investigated and confirmed with the product owner on
 | D8/R5 | `process_data` returns a structured result (paths + timings + clean row counts); not per-rule statistics |
 | D9/R7 | A ready-to-run example notebook with a tiny synthetic sample (no 43 MB file) |
 | D10/R8 | CI builds and verifies the wheel/sdist, fresh-venv install + import smoke |
-| D1/D11/R6 | First release `0.1.0`, installed from a pinned git tag; PyPI later |
+| D1/D11/R6 | First release `0.2.0`, installed from a pinned git tag; PyPI later |
 | D4 | License is BSD-3-Clause with the author's copyright line (SPDX form) |
 | D5 | `list_settings` is repointed to the user settings directory (not removed) |
 | D6 | No compatibility shim for the old internal import path |
@@ -130,7 +130,7 @@ constraints were investigated and confirmed with the product owner on
 - Not done: top-level package re-exports (`__init__.py` is empty), the result
   object (owner decision D8, tracked as gap D-6), `rich` declared, SPDX
   license + corrected copyright, `__version__`, example notebook (D9), CI
-  (D10), `v0.1.0` tag (D11).
+  (D10), `v0.2.0` tag (D11).
 
 The processing pipeline itself (CSV → Polars → SQLite → rules → export) is
 considered functionally adequate and is **not** part of the rework

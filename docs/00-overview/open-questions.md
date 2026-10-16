@@ -31,7 +31,7 @@ questions are numbered **OQ-**.
 
 | # | Decision | Rationale (as recorded) | Status |
 |---|---|---|---|
-| D1 | First release installs from a pinned git tag (`%pip install "git+…@v0.1.0"`); PyPI is a later phase, TestPyPI as dry-run | Avoids irreversible PyPI publication before verification | Confirmed 2026-10-14 |
+| D1 | First release installs from a pinned git tag (`%pip install "git+…@v0.2.0"`); PyPI is a later phase, TestPyPI as dry-run | Avoids irreversible PyPI publication before verification | Confirmed 2026-10-14 |
 | D2 | Missing settings raise `SettingsNotInitializedError` (subclass of `FileNotFoundError`) naming the missing file and remediation; no silent auto-init | Explicit failures beat surprises in a pipeline; `auto_init` may be added later as opt-in only | Confirmed; **implemented** |
 | D3 | Configuration location: platformdirs default + optional `settings_dir` parameter on both public functions | Portable across platforms (Windows has no config env var) | Confirmed; **implemented on the run path** (`initialize_settings` does not forward it yet — D-6) |
 | D4 | License: BSD-3-Clause with the author's copyright line; SPDX `license` expression replaces the MIT classifier | Legal/business correctness before publishing | Confirmed; **not implemented** (D-8) |
@@ -41,7 +41,7 @@ questions are numbered **OQ-**.
 | D8 | Result object scope: paths (report, import/export dirs, db, `null_data` files) + timestamps + clean row counts; no per-rule or non-mapped statistics | Gives the pipeline a contract without over-building | Confirmed; **not implemented** (D-6) |
 | D9 | Example notebook under `examples/notebooks/` with a tiny (~8 row) synthetic sample exercising DELETE/REPLACE/ADD; no 43 MB reference | Demonstrates the workflow without repo bloat | Confirmed; **not implemented** |
 | D10 | CI on push/PR: tests → build → `twine check` → wheel contents → fresh-venv install+import smoke | Catches packaging regressions (the original crash would have been caught) | Confirmed; **not implemented** |
-| D11 | First release version `0.1.0`, tag `v0.1.0`; 0.x SemVer conventions | Reproducible install target for the notebook | Confirmed; **not implemented** |
+| D11 | First release version `0.2.0`, tag `v0.2.0`; 0.x SemVer conventions | Reproducible install target for the notebook | Confirmed; **implemented** in `0.2.0` (T8) |
 
 Requirements R1–R10 of the same specification are the derived work items;
 their implementation status is tracked in

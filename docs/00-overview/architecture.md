@@ -70,7 +70,7 @@ flowchart TD
     DB --> UTILS
     DICT --> MODELS
     INIT --> PATHS
-    CSV -.->|polars| EXT1[(Polars / PyArrow)]
+    CSV -.->|polars| EXT1[(Polars)]
     DB -.->|sqlite3 + adbc_driver_sqlite| EXT2[(SQLite)]
     APP -.->|typer, rich| EXT3[(typer / rich)]
 ```
@@ -172,15 +172,16 @@ Runtime dependencies ([pyproject.toml](../../pyproject.toml)):
 
 | Package | Used for |
 |---|---|
-| `polars`, `pyarrow` | CSV reading/writing, in-memory rule DataFrames |
+| `polars` (≥2.0.0) | CSV reading/writing, chunked streaming import (`scan_csv().collect_batches()`), dictionary merge, in-memory rule DataFrames, CSV export |
+| `pyarrow` (≥23.0.1) | Import-time availability guard only (`_ensure_pyarrow_importable` in `db_service.py`); not on the CSV read/write path (the ADBC SQLite write path uses the Arrow C stream/PyCapsule and never imports pyarrow) |
 | `adbc-driver-sqlite` | Fast bulk writes into SQLite |
 | `typer` | CLI framework |
 | `rich` | Console output (**imported but not declared** — D-5) |
-| `pydantic`, `pydantic-settings` (unused residue) | Settings validation and enums |
+| `pydantic` | Settings validation and StrEnums |
+| `pydantic-settings` (unused residue) | Declared in `pyproject.toml` but not imported in `src/` |
 | `platformdirs` | Per-user settings directory location |
 | `PyYAML` | Settings files |
 | `Unidecode` | Transliteration of column names |
-| `pandas` | Legacy (only referenced by unused DB constants) |
 
 Configuration files: `app_config.yaml` (paths, extensions, index/date columns,
 dictionary column indexes, separators, CSV reader/writer options) and

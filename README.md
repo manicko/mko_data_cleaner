@@ -125,10 +125,10 @@ mko-data-cleaner list-settings --settings-dir C:\my\settings
 [`examples/notebooks/mko_data_cleaner_pipeline_example.ipynb`](examples/notebooks/mko_data_cleaner_pipeline_example.ipynb)
 (создаёт синтетический отчёт в‑cell и разбирает результат).
 
-Установить pinned‑релиз (тег `v0.1.0`):
+Установить pinned‑релиз (тег `v0.2.0`):
 
 ```
-%pip install "git+https://github.com/manicko/mko_data_cleaner.git@v0.1.0"
+%pip install "git+https://github.com/manicko/mko_data_cleaner.git@v0.2.0"
 ```
 
 ---
