@@ -73,3 +73,30 @@ def test_export_sql_to_csv_returns_zero_for_empty_table(tmp_path):
     assert isinstance(count, int)
     assert count == 0
     con.close()
+
+
+def test_export_sql_to_csv_populates_output_files(tmp_path):
+    """export_sql_to_csv appends every written file path to output_files."""
+    con = sqlite3.connect(tmp_path / "test.db")
+    con.execute("CREATE TABLE data_table (id INTEGER, name TEXT)")
+    con.executemany(
+        "INSERT INTO data_table VALUES (?, ?)",
+        [(1, "Alice"), (2, "Bob")],
+    )
+    con.commit()
+
+    worker = CSVWorker.__new__(CSVWorker)
+    worker.export_settings = {"compression": "gzip", "chunk_size": 1}
+
+    output_paths: list = []
+    count = worker.export_sql_to_csv(
+        db_con=con,
+        data_table="data_table",
+        export_path=tmp_path / "export",
+        output_files=output_paths,
+    )
+
+    assert count == 2
+    assert len(output_paths) == 2
+    assert all(p.exists() for p in output_paths)
+    con.close()

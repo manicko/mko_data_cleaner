@@ -243,13 +243,15 @@ class AppService:
             # checking non mapped data
             db_worker.build_non_mapped()
 
+            null_data_file_paths: list[Path] = []
             csv_worker.export_sql_to_csv(
                 db_con=db_worker.db_con,
                 file_prefix="null_data",
                 export_path=f"{self.base_path}",
                 data_table=db_worker.non_mapped_table,
+                output_files=null_data_file_paths,
             )
-            null_data_files = sorted(self.base_path.glob("null_data_*"))
+            null_data_files = sorted(null_data_file_paths)
 
             # synchronizing and exporting
 

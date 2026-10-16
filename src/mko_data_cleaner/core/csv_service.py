@@ -272,6 +272,7 @@ class CSVWorker:
         data_table: str,
         file_prefix: str | None = None,
         export_path: Path | str | None = None,
+        output_files: list[Path] | None = None,
     ) -> int:
         """
         Export SQLite table to CSV files using Polars.
@@ -290,6 +291,8 @@ class CSVWorker:
             Prefix for exported file names.
         export_path : Path | str, optional
             Directory for exported files.
+        output_files : list[Path] | None
+            If provided, every written file path is appended to this list.
 
         Returns
         -------
@@ -354,6 +357,9 @@ class CSVWorker:
                 )
 
                 file_path = export_path / file_name.format(file_index=file_index)
+
+                if output_files is not None:
+                    output_files.append(file_path)
 
                 df.write_csv(
                     file=file_path,
