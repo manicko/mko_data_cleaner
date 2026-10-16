@@ -51,13 +51,14 @@ def dict_indexes(realistic_config):
 
 @pytest.fixture
 def sample_dictionary():
-    """Реалистичный словарь для тестов (соответствует col_indexes из конфига пользователя)."""
+    """Realistic dictionary fixture for tests (matches user config col_indexes)."""
     data = [
         ["a", "f", 3, None, "Coca-Cola", "brand"],
         ["r", "p", 1, None, "канал", "channelName"],
         ["r", "s", 1, None, "Первый", "channelName"],
         ["d", "f", 5, None, "Удалить", None],
         ["a", "f", 4, None, "Спонсор", "sponsor_tag"],
+        ["a", "fts", "0|1", None, "Apple|Company", "fruit_tag"],
     ]
 
     return pl.DataFrame(
@@ -65,7 +66,7 @@ def sample_dictionary():
         schema={
             "action": pl.String,
             "match": pl.String,
-            "search": pl.Int64,  # индекс колонки поиска
+            "search": pl.String,  # search column index
             "extra_col": pl.String,
             "term": pl.String,
             "tag": pl.String,

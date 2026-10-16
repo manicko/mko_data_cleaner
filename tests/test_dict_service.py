@@ -6,43 +6,46 @@ from mko_data_cleaner.core.models import MappingColumns, MatchType
 
 def test_mapping_build(sample_dictionary, dict_indexes):
     """
-    Проверяет сборку MappingDict + build_mapping с реальными колонками и индексами из конфига.
+    Verifies MappingDict assembly + build_mapping with real columns and indexes from config.
     """
     mapping = MappingDict(data=sample_dictionary, action_col_indexes=dict_indexes)
 
-    # Реальные колонки из типичной Mediascope выгрузки + extra колонки
+    # Real columns from a typical Mediascope export + extra columns
     main_columns = ["adId", "researchDate", "programName", "channelName", "brand"]
     extra_columns = ["brand_normalized"]
 
     mapping.build_mapping(*main_columns, extra_col_names=extra_columns)
 
+    assert not mapping.like_data.is_empty()
+    assert not mapping.fts_data.is_empty()
+
+    # Common columns present in both (column_name only in like_data via _build_query join)
     for df in (mapping.like_data, mapping.fts_data):
-        if not df.is_empty():
-            _cols = set(df.columns)
-            assert MappingColumns.mapping_index in _cols
-            assert MappingColumns.pattern in _cols
-            assert MappingColumns.column_name in _cols
-            assert MappingColumns.action in _cols
-            assert MappingColumns.match in _cols
-            assert MappingColumns.term in _cols
+        _cols = set(df.columns)
+        assert MappingColumns.mapping_index in _cols
+        assert MappingColumns.pattern in _cols
+        assert MappingColumns.action in _cols
+        assert MappingColumns.match in _cols
+        assert MappingColumns.term in _cols
 
-    # Проверка генерации паттернов
-    if not mapping.like_data.is_empty():
-        df = mapping.like_data
-        patterns = df[MappingColumns.pattern].to_list()
+    assert MappingColumns.column_name in mapping.like_data.columns
 
-        assert "COCA-COLA" in patterns  # FULL_MATCH → без %
-        assert any(
-            p and p.startswith("%") and p.endswith("%") for p in patterns
-        )  # PARTIAL
-        assert any(p and p.endswith("%") for p in patterns)  # STARTS_WITH
-        assert df[MappingColumns.column_name].is_in(main_columns).all()
+    # Pattern generation sanity check
+    df = mapping.like_data
+    patterns = df[MappingColumns.pattern].to_list()
+
+    assert "COCA-COLA" in patterns  # FULL_MATCH → no %
+    assert any(
+        p and p.startswith("%") and p.endswith("%") for p in patterns
+    )  # PARTIAL
+    assert any(p and p.endswith("%") for p in patterns)  # STARTS_WITH
+    assert df[MappingColumns.column_name].is_in(main_columns).all()
 
 
 def test_pattern_generation(sample_dictionary, dict_indexes):
     """
-    Проверяет корректную генерацию LIKE-паттернов после build_mapping
-    с использованием реальных колонок и индексов из конфига пользователя.
+    Verifies correct generation of LIKE patterns after build_mapping
+    using real columns and indexes from the user config.
     """
     mapping = MappingDict(data=sample_dictionary, action_col_indexes=dict_indexes)
 
@@ -52,35 +55,36 @@ def test_pattern_generation(sample_dictionary, dict_indexes):
     mapping.build_mapping(*main_cols, extra_col_names=extra_cols)
 
     df = mapping.like_data
-    if not df.is_empty():
-        patterns = df[MappingColumns.pattern].to_list()
-        column_names = df[MappingColumns.column_name].to_list()
+    assert not df.is_empty()
 
-        # Основные ожидаемые паттерны
-        assert "COCA-COLA" in patterns, "FULL_MATCH должен давать термин без %"
-        assert "%КАНАЛ%" in patterns, "PARTIAL_MATCH должен оборачиваться в %...%"
-        assert "ПЕРВЫЙ%" in patterns, "STARTS_WITH должен давать термин%"
+    patterns = df[MappingColumns.pattern].to_list()
+    column_names = df[MappingColumns.column_name].to_list()
 
-        # Проверка, что column_name правильно сопоставлен с search индексом
-        assert "channelName" in column_names
-        assert "brand" in column_names
+    # Expected core patterns
+    assert "COCA-COLA" in patterns, "FULL_MATCH should produce term without %"
+    assert "%КАНАЛ%" in patterns, "PARTIAL_MATCH should wrap term in %...%"
+    assert "ПЕРВЫЙ%" in patterns, "STARTS_WITH should produce term%"
 
-        # Паттерны должны быть в UPPERCASE (как делает код)
-        for p in patterns:
-            if p is not None:
-                assert p == p.upper(), f"Паттерн должен быть в верхнем регистре: {p}"
+    # Verify column_name is correctly mapped from the search index
+    assert "channelName" in column_names
+    assert "brand" in column_names
 
-        # Проверка DELETE правила — сейчас паттерн генерируется (term не пустой)
-        # Если в будущем захотите None для DELETE — нужно изменить данные или логику
-        delete_patterns = df.filter(pl.col(MappingColumns.action) == "d")[
-            MappingColumns.pattern
-        ].to_list()
-        assert len(delete_patterns) == 1
-        assert delete_patterns[0] is not None  # сейчас поведение такое
+    # Patterns must be UPPERCASE (as the code does)
+    for p in patterns:
+        if p is not None:
+            assert p == p.upper(), f"Pattern must be uppercase: {p}"
+
+    # Verify DELETE rule — pattern is generated (term is non-empty)
+    # If None is desired for DELETE in the future, adjust data or logic
+    delete_patterns = df.filter(pl.col(MappingColumns.action) == "d")[
+        MappingColumns.pattern
+    ].to_list()
+    assert len(delete_patterns) == 1
+    assert delete_patterns[0] is not None  # current behavior
 
 
 def test_build_search_like_pattern_real_cases(sample_dictionary, dict_indexes):
-    """Проверяет генерацию LIKE-паттернов на реальных данных."""
+    """Verifies generation of LIKE patterns on real data."""
     mapping = MappingDict(data=sample_dictionary, action_col_indexes=dict_indexes)
 
     mapping.build_mapping(
@@ -93,25 +97,25 @@ def test_build_search_like_pattern_real_cases(sample_dictionary, dict_indexes):
     )
 
     df = mapping.like_data
-    if not df.is_empty():
+    assert not df.is_empty()
 
-        # Полный матч
-        full = df.filter(pl.col(MappingColumns.match) == MatchType.FULL_MATCH)
-        assert full[MappingColumns.pattern].to_list() == [
-            "COCA-COLA",
-            "УДАЛИТЬ",
-            "СПОНСОР",
-        ]
+    # Full match
+    full = df.filter(pl.col(MappingColumns.match) == MatchType.FULL_MATCH)
+    assert full[MappingColumns.pattern].to_list() == [
+        "COCA-COLA",
+        "УДАЛИТЬ",
+        "СПОНСОР",
+    ]
 
-        # Partial / Starts
-        partial_starts = df.filter(
-            pl.col(MappingColumns.match).is_in(
-                [MatchType.PARTIAL_MATCH, MatchType.STARTS_WITH]
-            )
+    # Partial / Starts
+    partial_starts = df.filter(
+        pl.col(MappingColumns.match).is_in(
+            [MatchType.PARTIAL_MATCH, MatchType.STARTS_WITH]
         )
-        assert any(
-            "%" in p for p in partial_starts[MappingColumns.pattern].to_list() if p
-        )
+    )
+    assert any(
+        "%" in p for p in partial_starts[MappingColumns.pattern].to_list() if p
+    )
 
 
 def test_drop_empty_columns():
