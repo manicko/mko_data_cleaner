@@ -1,3 +1,4 @@
+import gzip
 from pathlib import Path
 
 import polars as pl
@@ -123,3 +124,43 @@ def db_worker_memory(tmp_path):
 
     with DBWorker(db_file=db_file, tbl_name="data_table", index_column="id") as worker:
         yield worker
+
+
+@pytest.fixture
+def synthetic_report(tmp_path: Path) -> Path:
+    """Create a tiny synthetic report directory for end-to-end tests.
+
+    Mirrors the e2e scenario in scripts/smoke_install.py (lines 112-160)
+    and tests/test_app.py::test_process_data_end_to_end. When either the
+    data or the assertions change, update ALL copies:
+      1. scripts/smoke_install.py (maintenance comment)
+      2. tests/test_app.py::test_process_data_end_to_end
+      3. tests/test_app.py::test_null_data_files_excludes_stale
+    Shared assertions: rows_loaded==3, rows_exported==2,
+    export_dir/import_dir/report_dir resolved, export dir exists with
+    .gz files, null_data_files is list, duration>0, timings keys.
+    """
+    report_dir = tmp_path / "report"
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+        "id3;2024-02-01;2024;02;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir

@@ -109,7 +109,15 @@ subprocess.run(
 print("[PASS] (iv) CLI smoke (--help, init, list-settings)")
 
 # ---------------------------------------------------------------------------
-# (v) End-to-end on synthetic sample (reuses test_app.py::test_process_data_end_to_end)
+# (v) End-to-end on synthetic sample
+#
+# DUPLICATED — keep in sync with:
+#   - tests/test_app.py::test_process_data_end_to_end
+#   - tests/test_app.py::test_null_data_files_excludes_stale
+#   (both use tests/conftest.py::synthetic_report fixture)
+# Shared assertions: rows_loaded==3, rows_exported==2, export_dir/import_dir/
+# report_dir resolved, export dir exists with .gz files, null_data_files is
+# list, duration>0, timings keys == {import, mapping, export}.
 # ---------------------------------------------------------------------------
 _e2e = Path(tempfile.mkdtemp())
 _raw = _e2e / "raw_data"
