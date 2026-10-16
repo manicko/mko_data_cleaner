@@ -127,6 +127,19 @@ def test_set_data_tbl_columns(db_worker):
     assert db_worker.extra_columns == expected_extra
 
 
+def test_set_data_tbl_columns_empty_extra_cols(db_worker):
+    """Empty extra_cols must set extra_columns to [], not all data columns.
+
+    Regression test for the ``[-0:]`` Python gotcha: when ``extra_cols=[]``
+    the slice ``[-len([]) :]`` evaluates to ``[-0 :]`` which is ``[0 :]``
+    returning the entire column list. The fix guards the slice so an empty
+    extra_cols yields an empty extra_columns.
+    """
+    db_worker.set_data_tbl_columns("id", "name", "value", extra_cols=[])
+    assert db_worker.data_tbl_columns == ["id", "name", "value"]
+    assert db_worker.extra_columns == []
+
+
 def test_search_columns_setter(db_worker):
     """Покрывает setter search_columns (фильтрация по существующим колонкам)."""
     db_worker.set_data_tbl_columns("col1", "col2", "col3")

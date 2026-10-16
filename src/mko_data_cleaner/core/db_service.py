@@ -133,7 +133,10 @@ class DBWorker:
     def set_data_tbl_columns(self, *main_cols, extra_cols: list | None = None):
         extra_cols = extra_cols or []
         self._data_tbl_columns = clean_names(*main_cols, *extra_cols)
-        self._extra_columns = self.data_tbl_columns[-len(extra_cols) :]
+        if extra_cols:
+            self._extra_columns = self.data_tbl_columns[-len(extra_cols) :]
+        else:
+            self._extra_columns = []
 
     # ---------------------------------------------------------
     # init logic
