@@ -160,10 +160,6 @@ addopts = [
 console_output_style = "classic"
 testpaths = ["tests"]
 pythonpath = ["src"]
-# register custom markers to avoid PytestUnknownMarkWarning
-markers = [
-    "slow: marks tests as slow (use -m slow to run)",
-]
 
 
 [dependency-groups]
