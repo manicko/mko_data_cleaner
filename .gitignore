@@ -221,4 +221,5 @@ __marimo__/
 /dist/
 data/*
 !data/output/.gitkeep
+.ai/tmp/
 
