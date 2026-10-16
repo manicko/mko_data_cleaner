@@ -193,7 +193,7 @@ class MappingDict:
         """
 
         # ensure search column contains numbers - indexes of columns to search
-        data = df.with_columns(pl.col(search_col).cast(pl.Int64), strict=False)
+        data = df.with_columns(pl.col(search_col).cast(pl.Int64))
 
         data = data.join(pl.DataFrame(self.data_col_index), on=search_col, how="left")
 

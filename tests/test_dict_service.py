@@ -156,3 +156,17 @@ def test_like_pattern_partial():
     result = df.with_columns(expr.alias("pattern"))
 
     assert result["pattern"][0] == "%APP%"
+
+
+def test_build_query_no_strict_column(sample_dictionary, dict_indexes):
+    """like_data must not contain a spurious 'strict' column from with_columns kwargs."""
+    mapping = MappingDict(data=sample_dictionary, action_col_indexes=dict_indexes)
+    mapping.build_mapping(
+        "adId",
+        "researchDate",
+        "programName",
+        "channelName",
+        "brand",
+        extra_col_names=["brand_normalized"],
+    )
+    assert "strict" not in mapping.like_data.columns
