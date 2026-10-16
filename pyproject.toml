@@ -136,6 +136,7 @@ skip-magic-trailing-comma = false
 
 # MyPy config (project-level)
 [tool.mypy]
+files = ["src/mko_data_cleaner"]
 # If sources live in package root, mypy_path not needed; if you use src/ layout set mypy_path.
 mypy_path = "./src"
 follow_imports = "silent"
@@ -169,7 +170,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-mock>=3.15.1",
     "ruff>=0.15.1",
-    "mypy>=1.10.0",
+    "mypy>=1.19.1,<2.0.0",
     "twine>=5.0.0",
     "ipykernel>=6.29.0",
     "nbclient>=0.10.0",

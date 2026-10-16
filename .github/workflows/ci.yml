@@ -24,6 +24,9 @@ jobs:
           enable-cache: true
       - run: uv sync
       - run: uv run ruff check src/ tests/ scripts/
+      - name: Type check (non-blocking)
+        continue-on-error: true
+        run: uv run mypy src/mko_data_cleaner
       - run: uv run pytest
 
   build:
