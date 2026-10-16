@@ -11,7 +11,7 @@ try:
 except PackageNotFoundError:
     # Fallback for source checkout / pythonpath=src (not pip-installed).
     # NOTE: must track the top-level ``version`` in pyproject.toml.
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"
 
 __all__ = [
     "ReportResult",
