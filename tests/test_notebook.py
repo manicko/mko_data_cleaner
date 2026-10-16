@@ -38,11 +38,20 @@ def test_notebook_has_unique_nonempty_cell_ids():
     assert len(ids) == len(set(ids)), "duplicate cell ids"
 
 
-def test_notebook_install_cell_pins_v0_2_0():
-    """The install cell pins the v0.2.0 tag (D1/D11)."""
+def test_notebook_install_cell_uses_library_check():
+    """The install cell delegates version checking to the library function."""
     nb = _load()
+
+    # The install cell (id="cell-install") must use the library check, not
+    # inline importlib.metadata / --force-reinstall logic.
+    install_cell = next(c for c in nb.cells if c.get("id") == "cell-install")
+    assert "check_notebook_environment" in install_cell.source
+    assert "importlib.metadata" not in install_cell.source
+    assert "--force-reinstall" not in install_cell.source
+
+    # v0.2.0 still appears as a PIN reference across code cells.
     joined = "\n".join(c.source for c in nb.cells if c.cell_type == "code")
-    assert "git+https://github.com/manicko/mko_data_cleaner.git@v0.2.0" in joined
+    assert "v0.2.0" in joined
 
 
 def test_notebook_imports_public_api():

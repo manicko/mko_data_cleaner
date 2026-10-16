@@ -17,6 +17,7 @@ license-files = ["LICENSE.txt"]
 dependencies = [
     "adbc-driver-sqlite>=1.10.0",
     # "pandas>=2.2.0",
+    "packaging>=24.0",
     "platformdirs>=4.7.0",
     "polars>=2.0.0,<3.0.0",
     "pyarrow>=23.0.1",
@@ -148,6 +149,10 @@ check_untyped_defs = true
 no_implicit_reexport = true
 ignore_missing_imports = true
 
+[tool.basedpyright]
+typeCheckingMode = "standard"
+reportMissingTypeStubs = "none"
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 python_files = ["tests.py", "test_*.py"]
@@ -177,4 +182,6 @@ dev = [
     "nbformat>=5.10.0",
     "build>=1.0.0",
     "check-wheel-contents>=0.6.3",
+    "basedpyright>=1.40.2",
+    "bandit>=1.7.0,<2.0",
 ]

@@ -5,6 +5,7 @@ from importlib.metadata import PackageNotFoundError, version
 from mko_data_cleaner.app import initialize_settings, process_data
 from mko_data_cleaner.core.errors import SettingsNotInitializedError
 from mko_data_cleaner.core.models import ReportResult
+from mko_data_cleaner.notebook import check_notebook_environment
 
 try:
     __version__ = version("mko_data_cleaner")
@@ -19,4 +20,5 @@ __all__ = [
     "__version__",
     "initialize_settings",
     "process_data",
+    "check_notebook_environment",
 ]

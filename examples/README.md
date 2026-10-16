@@ -20,7 +20,7 @@ referenced or required) and runs the full clean → map → export cycle.
   - **Local dev install** (no network needed): from the repo root,
     `uv sync` installs the project (editable) plus notebook tooling
     (`nbformat`, `nbclient`, `ipykernel`) into the dev group — the notebook's
-    import cell is a no-op in this environment.
+    install cell is a no-op in this environment (version matches the pin).
 
 ## How to run
 
@@ -34,7 +34,7 @@ referenced or required) and runs the full clean → map → export cycle.
 | # | Type | Tag | Purpose |
 |---|------|-----|---------|
 | 1 | markdown | | Title + purpose + prerequisites |
-| 2 | code | `install` | Import-guard `%pip install ...@v0.2.0` (no-op in dev venv) |
+| 2 | code | `install` | `check_notebook_environment()` — prints install/upgrade guidance if version behind the pin (no-op if v0.2.0 already installed) |
 | 3 | markdown | | "Import the library and public API" |
 | 4 | code | | Imports + `__version__` + `process_data` docstring |
 | 5 | markdown | | "Initialize settings" |
@@ -118,10 +118,10 @@ Null-data extract (`null_data_*.csv.gz`) — 2 rows (`BRANDS;tag`): `Orange;null
 
 ## Troubleshooting
 
-- **`v0.2.0` tag not found.** The install cell pins `git+...@v0.2.0`, which is
-  only cut in a later release step. Until then, use the local dev install
-  (`uv sync`) and run the notebook in that environment — the import guard makes
-  the install cell a no-op.
+- **`v0.2.0` tag not found.** The install cell pins `git+...@v0.2.0` and calls
+  `check_notebook_environment()`; in the dev venv (already at v0.2.0) it is a no-op.
+  That tag is only cut in a later release step. Until then, use the local dev install
+  (`uv sync`) and run the notebook in that environment.
 - **`AttributeError: 'OutStream' object has no attribute 'reconfigure'` (should not occur).** Fixed in the package: `mko_data_cleaner.app` guards the import-time `sys.stdout.reconfigure(line_buffering=True)` call with `hasattr(sys.stdout, "reconfigure")`, so ipykernel's `OutStream` is skipped and the package imports under a real kernel with **no notebook shim** required (line buffering is irrelevant inside a kernel).
 - **`SettingsNotInitializedError` / `FileNotFoundError: app_config.yaml`.** Run
   cell 6 (`initialize_settings`) before cell 12 (`process_data`).

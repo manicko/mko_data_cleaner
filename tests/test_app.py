@@ -18,6 +18,7 @@ from mko_data_cleaner.core.init_service import init_project
 from mko_data_cleaner.core.models import ReportResult
 from mko_data_cleaner.core.paths import APP_DIR, APP_NAME, AppPaths
 from mko_data_cleaner.core.utils import yaml_to_dict
+from mko_data_cleaner.notebook import check_notebook_environment
 
 # Path to the package's shipped settings templates (app_config.yaml / log_config.yaml)
 TEMPLATE_SETTINGS_DIR = APP_DIR / "settings"
@@ -381,10 +382,11 @@ def test_init_project_none_uses_app_paths(tmp_path: Path, monkeypatch):
 # B4: top-level re-exports
 # ------------------------------------------------------------------- #
 def test_top_level_exports():
-    """import mko_data_cleaner exposes exactly the 5 public names."""
+    """import mko_data_cleaner exposes exactly the 6 public names."""
     import mko_data_cleaner
 
     expected = {
+        "check_notebook_environment",
         "ReportResult",
         "SettingsNotInitializedError",
         "__version__",
@@ -398,6 +400,7 @@ def test_top_level_exports():
     assert mko_data_cleaner.initialize_settings is initialize_settings
     assert mko_data_cleaner.ReportResult is ReportResult
     assert mko_data_cleaner.SettingsNotInitializedError is SettingsNotInitializedError
+    assert mko_data_cleaner.check_notebook_environment is check_notebook_environment
 
 
 def test_top_level_no_import_side_effects(tmp_path: Path):
