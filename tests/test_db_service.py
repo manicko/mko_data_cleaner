@@ -50,7 +50,7 @@ def test_create_table_with_index_realistic(db_worker):
     Проверяет весь путь: set_data_tbl_columns → search_columns → create_table_with_index.
     """
     main_columns = [
-        "adId",
+        "AdId",
         "researchDate",
         "programName",
         "channelName",
@@ -71,13 +71,13 @@ def test_create_table_with_index_realistic(db_worker):
     assert db_worker.tbl_exists(db_worker._index_tbl_name)
 
     columns = db_worker.get_table_columns(db_worker.data_tbl_name)
-    assert "adId" in columns
+    assert "AdId" in columns
     assert "brand_normalized" in columns
     assert len(columns) == len(main_columns) + len(extra_columns)
 
     # Проверка, что индексная таблица содержит нужные колонки
     index_columns = db_worker.get_table_columns(db_worker._index_tbl_name)
-    assert "adId" in index_columns
+    assert "AdId" in index_columns
     assert "brand" in index_columns
 
 

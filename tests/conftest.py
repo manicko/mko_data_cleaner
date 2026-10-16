@@ -3,6 +3,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+import yaml
 
 from mko_data_cleaner.core.db_service import DBWorker
 from mko_data_cleaner.core.models import DictColumnsIndexes
@@ -10,25 +11,17 @@ from mko_data_cleaner.core.models import DictColumnsIndexes
 
 @pytest.fixture
 def realistic_config():
-    return {
-        "data_paths": {
-            "import_folder": "raw_data",
-            "export_folder": "clean_data",
-            "dict_file": "dict/merged_dictionary.csv",
-            "db_file": "data_base/db_example.db",
-        },
-        "data_file_settings": {
-            "extension": "gz",
-            "index_column": "adId",
-            "date_column": "researchDate",
-        },
-        "dict_file_settings": {
-            "extension": "gz",
-            "add_separator": ", ",
-            "col_indexes": {"action": 0, "match": 1, "search": 2, "term": 4},
-        },
-        "database_settings": {"table_name": "data_table"},
-    }
+    """Load realistic config from the shipped app_config.yaml template.
+
+    Avoids drift between test fixtures and template defaults (TST-017).
+    Also fixes a casing bug: fixture had ``adId`` but the template and
+    CSV headers use ``AdId``.
+    """
+    import importlib.resources as resources
+
+    pkg = resources.files("mko_data_cleaner")
+    with (pkg / "settings" / "app_config.yaml").open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 @pytest.fixture
