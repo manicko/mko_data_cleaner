@@ -364,6 +364,77 @@ def test_apply_delete_executes_delete_once(db_worker, mocker):
     assert len(remaining) == 2
 
 
+def test_apply_replace_picks_highest_mapping_index(db_worker, mocker):
+    """``_apply_replace`` must apply the highest mapping_index rule when
+    multiple REPLACE rules match the same data row (TST-003).
+
+    Modeled on ``test_apply_delete_executes_delete_once``: sets up a target table
+    with rows and a TEMP joined_matches_table referencing them, spies on
+    ``perform_query``, calls the private method, and asserts on the SQL and
+    observable outcome.
+    """
+    # --- arrange: target table with at least three rows ---
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=["sponsor"])
+    db_worker.create_table(db_worker.data_tbl_name, "adId", "brand", "sponsor")
+    db_worker.search_columns = ["brand"]
+
+    target = db_worker.target_table
+
+    insert_q = f"INSERT INTO {target} (adId, brand, sponsor) VALUES (?, ?, ?)"
+    for ad_id in ("ad1", "ad2", "ad3"):
+        db_worker.perform_query(insert_q, (ad_id, "BrandX", None))
+
+    rowids = [
+        r[0]
+        for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
+    ]
+    assert len(rowids) == 3
+
+    # TEMP joined_matches_table with 2 entries for the same rowid
+    # but different mapping_index values (1 and 2). Highest must win.
+    db_worker.perform_query(
+        f"CREATE TEMP TABLE {db_worker._joined_matches_table} "
+        f"(data_rowid INTEGER, mapping_index INTEGER, sponsor TEXT)"
+    )
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker._joined_matches_table} "
+        f"(data_rowid, mapping_index, sponsor) VALUES (?, ?, ?)",
+        (rowids[0], 2, "FromRule2"),
+    )
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker._joined_matches_table} "
+        f"(data_rowid, mapping_index, sponsor) VALUES (?, ?, ?)",
+        (rowids[0], 1, "FromRule1"),
+    )
+
+    # --- act: spy BEFORE the call-under-test so only its query is recorded ---
+    spy = mocker.spy(db_worker, "perform_query")
+
+    db_worker._apply_replace(column_names=["sponsor"])
+
+    # --- assert: single UPDATE execution ---
+    assert spy.call_count == 1
+
+    executed_sql = spy.call_args_list[0].args[0]
+    assert "UPDATE" in executed_sql
+    assert target in executed_sql
+
+    # --- assert: highest mapping_index (2) wins ---
+    result = db_worker.db_con.execute(
+        f"SELECT sponsor FROM {target} WHERE rowid = ?",
+        (rowids[0],),
+    ).fetchone()
+    assert result[0] == "FromRule2"
+
+    # --- assert: unmatched rows are untouched ---
+    for rid in rowids[1:]:
+        result = db_worker.db_con.execute(
+            f"SELECT sponsor FROM {target} WHERE rowid = ?",
+            (rid,),
+        ).fetchone()
+        assert result[0] is None
+
+
 # --------------------------------------------------------------------------- #
 # build_non_mapped — NULL-detection via SQLite bitwise '|'  (TST-016, TST-006)
 # --------------------------------------------------------------------------- #
