@@ -362,3 +362,65 @@ def test_apply_delete_executes_delete_once(db_worker, mocker):
     ]
     assert rowids[0] not in remaining
     assert len(remaining) == 2
+
+
+# --------------------------------------------------------------------------- #
+# build_non_mapped — NULL-detection via SQLite bitwise '|'  (TST-016, TST-006)
+# --------------------------------------------------------------------------- #
+def test_build_non_mapped_with_extra_cols(db_worker, extra_cols):
+    """build_non_mapped selects rows where the extra column is NULL.
+
+    Uses the ``extra_cols`` fixture (['tag']) to wire the previously-unused
+    fixture into a real test path (TST-016).
+    """
+    # 'tag' is passed only as an extra column — set_data_tbl_columns must
+    # not receive it twice or clean_names would rename the duplicate to tag_1.
+    db_worker.set_data_tbl_columns("id", "name", extra_cols=extra_cols)
+    db_worker.index_column = "id"
+    db_worker.search_columns = ["name"]
+    db_worker.create_table_with_index()
+
+    # After create_table_with_index the index table (data_table_distinct)
+    # is the active target_table, so we insert rows directly into it.
+    target = db_worker.target_table
+    insert_q = f"INSERT INTO {target} (id, name, tag) VALUES (?, ?, ?)"
+    db_worker.perform_query(insert_q, ("id1", "Name1", None))
+    db_worker.perform_query(insert_q, ("id2", "Name2", "tag_value"))
+
+    db_worker.build_non_mapped()
+
+    rows = db_worker.perform_query(
+        f"SELECT name FROM {db_worker.non_mapped_table}"
+    ).fetchall()
+    names = [r[0] for r in rows]
+    assert "Name1" in names  # tag is NULL → selected
+    assert "Name2" not in names  # tag has value → not selected
+
+
+def test_build_non_mapped_multi_extra_cols(db_worker):
+    """build_non_mapped with 2+ extra columns selects rows where ANY is NULL.
+
+    SQLite's ``|`` (bitwise OR) propagates NULL: ``tag | grp IS NULL`` is
+    True when either column is NULL.  This verifies the multi-extra-column
+    branch (TST-006 coverage gap).
+    """
+    db_worker.set_data_tbl_columns("id", "name", extra_cols=["tag", "grp"])
+    db_worker.index_column = "id"
+    db_worker.search_columns = ["name"]
+    db_worker.create_table_with_index()
+
+    target = db_worker.target_table
+    insert_q = f"INSERT INTO {target} (id, name, tag, grp) VALUES (?, ?, ?, ?)"
+    db_worker.perform_query(insert_q, ("id1", "Name1", None, "group_a"))
+    db_worker.perform_query(insert_q, ("id2", "Name2", "tag_value", None))
+    db_worker.perform_query(insert_q, ("id3", "Name3", "tag_value", "group_b"))
+
+    db_worker.build_non_mapped()
+
+    rows = db_worker.perform_query(
+        f"SELECT name FROM {db_worker.non_mapped_table}"
+    ).fetchall()
+    names = [r[0] for r in rows]
+    assert "Name1" in names  # tag NULL → selected
+    assert "Name2" in names  # grp NULL → selected
+    assert "Name3" not in names  # both set → not selected

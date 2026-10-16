@@ -77,11 +77,20 @@ def sample_dictionary():
 
 @pytest.fixture
 def extra_cols():
+    """List of extra column names to pass to ``set_data_tbl_columns``.
+
+    Used by ``test_build_non_mapped_with_extra_cols`` to wire this fixture
+    into a real test path (TST-016).
+    """
     return ["tag"]
 
 
 @pytest.fixture
 def sample_mapping_df():
+    """Reserved for future integration tests of ``group_by_cols``.
+
+    No current consumer (TST-016).
+    """
     return pl.DataFrame(
         {
             "action": ["a", "r", "d"],
@@ -95,12 +104,20 @@ def sample_mapping_df():
 
 @pytest.fixture
 def tmp_db_path(tmp_path: Path) -> Path:
-    """Temporary sqlite database file"""
+    """Path to a temporary sqlite database file.
+
+    Reserved for future integration tests. No current consumer (TST-016).
+    """
     return tmp_path / "test_database.db"
 
 
 @pytest.fixture
 def db_worker_memory(tmp_path):
+    """DBWorker backed by an on-disk sqlite file (``tmp_path``).
+
+    Reserved for future integration tests that need an isolated worker.
+    No current consumer (TST-016).
+    """
 
     db_file = tmp_path / "memory.db"
 
