@@ -38,11 +38,11 @@ def test_notebook_has_unique_nonempty_cell_ids():
     assert len(ids) == len(set(ids)), "duplicate cell ids"
 
 
-def test_notebook_install_cell_pins_v0_1_0():
-    """The install cell pins the v0.1.0 tag (D1/D11)."""
+def test_notebook_install_cell_pins_v0_2_0():
+    """The install cell pins the v0.2.0 tag (D1/D11)."""
     nb = _load()
     joined = "\n".join(c.source for c in nb.cells if c.cell_type == "code")
-    assert "git+https://github.com/manicko/mko_data_cleaner.git@v0.1.0" in joined
+    assert "git+https://github.com/manicko/mko_data_cleaner.git@v0.2.0" in joined
 
 
 def test_notebook_imports_public_api():
