@@ -42,10 +42,10 @@ jobs:
       - run: uv run python -m build
       - run: uv run twine check --strict dist/*
       - run: uv run check-wheel-contents --package src/mko_data_cleaner dist/*.whl
-      - name: Assert wheel contents (YAML templates + no leakage)
+      - name: Assert wheel contents (JSON5 templates + no leakage)
         run: |
           wheel=$(ls dist/*.whl | head -1)
-          uv run python -c "import zipfile; names = zipfile.ZipFile('$wheel').namelist(); assert 'mko_data_cleaner/settings/app_config.yaml' in names, 'app_config.yaml MISSING from wheel'; assert 'mko_data_cleaner/settings/log_config.yaml' in names, 'log_config.yaml MISSING from wheel'; leaked = [n for n in names if '/data/' in n or n.startswith('data/')]; assert not leaked, 'data/ leaked into wheel: ' + str(leaked); stale = [n for n in names if 'mko_get_mediascope_data' in n]; assert not stale, 'stale name leaked into wheel: ' + str(stale); print(f'Wheel OK: {len(names)} entries, YAML templates present, no data/ leakage')"
+          uv run python -c "import zipfile; names = zipfile.ZipFile('$wheel').namelist(); assert 'mko_data_cleaner/settings/app_config.json5' in names, 'app_config.json5 MISSING from wheel'; assert 'mko_data_cleaner/settings/log_config.json5' in names, 'log_config.json5 MISSING from wheel'; leaked = [n for n in names if '/data/' in n or n.startswith('data/')]; assert not leaked, 'data/ leaked into wheel: ' + str(leaked); stale = [n for n in names if 'mko_get_mediascope_data' in n]; assert not stale, 'stale name leaked into wheel: ' + str(stale); print(f'Wheel OK: {len(names)} entries, JSON5 templates present, no data/ leakage')"
       - uses: actions/upload-artifact@v4
         with:
           name: dist

@@ -4,7 +4,7 @@
 Validates that the pip-installed package:
   (i)   imports without crashing (F1/F2 regression gate)
   (ii)  process_data without settings raises SettingsNotInitializedError
-  (iii) initialize_settings() ships YAML templates (F3 regression gate)
+  (iii) initialize_settings() ships JSON5 templates (F3 regression gate)
   (iv)  CLI commands work (--help, init, list-settings)
   (v)   end-to-end process_data on a tiny synthetic report (F8)
   (vi)  __version__ resolves from installed package metadata
@@ -68,8 +68,8 @@ except SettingsNotInitializedError as exc:
     assert "initialize_settings()" in _msg, (
         f"error message missing 'initialize_settings()': {_msg}"
     )
-    assert "app_config.yaml" in _msg, (
-        f"error message missing 'app_config.yaml': {_msg}"
+    assert "app_config.json5" in _msg, (
+        f"error message missing 'app_config.json5': {_msg}"
     )
     print("[PASS] (ii) SettingsNotInitializedError raised for missing settings")
 else:
@@ -80,8 +80,8 @@ else:
 # ---------------------------------------------------------------------------
 _tmp_config = Path(tempfile.mkdtemp())
 _settings_path = initialize_settings(settings_dir=_tmp_config)
-assert (_settings_path / "app_config.yaml").exists(), "app_config.yaml not created"
-assert (_settings_path / "log_config.yaml").exists(), "log_config.yaml not created"
+assert (_settings_path / "app_config.json5").exists(), "app_config.json5 not created"
+assert (_settings_path / "log_config.json5").exists(), "log_config.json5 not created"
 print(f"[PASS] (iii) settings initialized at {_settings_path}")
 
 # ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ _raw.mkdir(parents=True)
 _ddir = _e2e / "dict"
 _ddir.mkdir(parents=True)
 
-# Header matches app_config.yaml template: index_column=AdId, date_column=researchDate
+# Header matches app_config.json5 template: index_column=AdId, date_column=researchDate
 csv_lines = [
     "AdId;researchDate;YEAR;MONTH;BRAND",
     "id1;2024-01-01;2024;01;Brand1",
