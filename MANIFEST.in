@@ -1,6 +1,6 @@
 include README.md
 include LICENSE.txt
-recursive-include src/mko_data_cleaner/settings *.yaml
+recursive-include src/mko_data_cleaner/settings *.json5
 
 exclude tests
 exclude *.git

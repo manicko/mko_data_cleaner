@@ -18,7 +18,7 @@ class ConfigError(Exception):
 
 
 class SettingsNotInitializedError(FileNotFoundError):
-    """Raised when user settings (app_config.yaml / log_config.yaml) are missing."""
+    """Raised when user settings (app_config.json5 / log_config.json5) are missing."""
 
     def __init__(self, user_settings_dir: Path, missing_files: list[str]):
         missing = ", ".join(missing_files)

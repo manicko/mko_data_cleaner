@@ -3,7 +3,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-import yaml
+import json5
 
 from mko_data_cleaner.core.db_service import DBWorker
 from mko_data_cleaner.core.models import DictColumnsIndexes
@@ -11,7 +11,7 @@ from mko_data_cleaner.core.models import DictColumnsIndexes
 
 @pytest.fixture
 def realistic_config():
-    """Load realistic config from the shipped app_config.yaml template.
+    """Load realistic config from the shipped app_config.json5 template.
 
     Avoids drift between test fixtures and template defaults (TST-017).
     Also fixes a casing bug: fixture had ``adId`` but the template and
@@ -20,8 +20,8 @@ def realistic_config():
     import importlib.resources as resources
 
     pkg = resources.files("mko_data_cleaner")
-    with (pkg / "settings" / "app_config.yaml").open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    with (pkg / "settings" / "app_config.json5").open("r", encoding="utf-8") as f:
+        return json5.load(f)
 
 
 @pytest.fixture

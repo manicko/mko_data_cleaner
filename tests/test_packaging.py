@@ -22,37 +22,37 @@ def _load_pyproject():
         return tomllib.load(f)
 
 
-def test_template_yamls_accessible_as_package_data():
-    """Both YAML settings templates are accessible via importlib.resources.
+def test_template_json5_accessible_as_package_data():
+    """Both JSON5 settings templates are accessible via importlib.resources.
 
     At pre-fix HEAD (B2 not applied), the wheel had 18 entries and
-    zero settings/*.yaml. This test fails on such code because
+    zero settings/*.json5. This test fails on such code because
     importlib.resources.files() cannot locate non-package data
     without [tool.setuptools.package-data].
     """
     import importlib.resources as resources
 
     pkg = resources.files("mko_data_cleaner")
-    assert (pkg / "settings" / "app_config.yaml").is_file(), (
-        "app_config.yaml not accessible as package data"
+    assert (pkg / "settings" / "app_config.json5").is_file(), (
+        "app_config.json5 not accessible as package data"
     )
-    assert (pkg / "settings" / "log_config.yaml").is_file(), (
-        "log_config.yaml not accessible as package data"
+    assert (pkg / "settings" / "log_config.json5").is_file(), (
+        "log_config.json5 not accessible as package data"
     )
 
 
-def test_template_yamls_parse():
-    """Shipped YAML templates parse as valid YAML with expected top-level keys."""
+def test_template_json5_parse():
+    """Shipped JSON5 templates parse as valid JSON5 with expected top-level keys."""
     import importlib.resources as resources
 
-    import yaml
+    import json5
 
     pkg = resources.files("mko_data_cleaner")
-    app_cfg = yaml.safe_load(
-        (pkg / "settings" / "app_config.yaml").read_text(encoding="utf-8")
+    app_cfg = json5.loads(
+        (pkg / "settings" / "app_config.json5").read_text(encoding="utf-8")
     )
-    log_cfg = yaml.safe_load(
-        (pkg / "settings" / "log_config.yaml").read_text(encoding="utf-8")
+    log_cfg = json5.loads(
+        (pkg / "settings" / "log_config.json5").read_text(encoding="utf-8")
     )
     assert "data_paths" in app_cfg
     assert "handlers" in log_cfg
@@ -63,11 +63,11 @@ def test_manifest_in_no_stale_project_name():
     assert "mko_get_mediascope_data" not in MANIFEST.read_text()
 
 
-def test_manifest_in_includes_yaml_templates():
-    """MANIFEST.in has recursive-include for settings/*.yaml (sdist)."""
+def test_manifest_in_includes_json5_templates():
+    """MANIFEST.in has recursive-include for settings/*.json5 (sdist)."""
     content = MANIFEST.read_text()
     assert "recursive-include" in content
-    assert "*.yaml" in content
+    assert "*.json5" in content
     assert "settings" in content
 
 
@@ -92,8 +92,8 @@ def test_pyproject_uses_spdx_license():
 
 
 def test_pyproject_declares_package_data():
-    """pyproject.toml declares [tool.setuptools.package-data] for YAMLs (B2)."""
+    """pyproject.toml declares [tool.setuptools.package-data] for JSON5 (B2)."""
     setuptools = _load_pyproject()["tool"]["setuptools"]
     package_data = setuptools.get("package-data", {})
-    yaml_patterns = package_data.get("mko_data_cleaner", [])
-    assert "settings/*.yaml" in yaml_patterns, yaml_patterns
+    json5_patterns = package_data.get("mko_data_cleaner", [])
+    assert "settings/*.json5" in json5_patterns, json5_patterns

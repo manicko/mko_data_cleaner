@@ -6,44 +6,44 @@
     'db_file': 'data_base/db_example.db'
   },
   'data_file_settings': {
-    'extension': 'gz', # data files'  extension
+    'extension': 'gz', // data files'  extension
     'index_column': 'AdId',
-    'date_column': 'researchDate' #'researchDate' researchMonth
+    'date_column': 'researchDate' //'researchDate' researchMonth
   },
   'dict_file_settings': {
     'extension': 'gz',
     'add_separator': ', ',
     'fts_separator': '|',
-    'col_indexes': { # columns' indexes in the mapping dictionary containing settings
-      'action': 0,  # update or delete setting
+    'col_indexes': { // columns' indexes in the mapping dictionary containing settings
+      'action': 0,  // update or delete setting
       'match': 1,
       'search': 2,
-      'term': 4  # search string used after match setting in the SQL query
+      'term': 4  // search string used after match setting in the SQL query
     },
   },
 
   'database_settings': {
     'table_name': 'data_table'
   },
-  'read_settings': { # general settings for polars CSV reader
+  'read_settings': { // general settings for polars CSV reader
     "from_csv": {
       "separator": ";",
       "encoding": "utf8",
-      "decimal_comma": True,
+      "decimal_comma": true,
       "skip_rows": 0,
-      "has_header": True,
-      "ignore_errors": False,
-      "infer_schema_length":False
+      "has_header": true,
+      "ignore_errors": false,
+      "infer_schema_length":false
     }
   },
   'export_settings': {
     "to_csv": {
       "chunk_size": 100000,
-      "include_bom": True,
+      "include_bom": true,
       "separator": ";",
-      "decimal_comma": True,
-      "include_header": True,
+      "decimal_comma": true,
+      "include_header": true,
       "compression": "gzip"
     }
-  },
+  }
 }

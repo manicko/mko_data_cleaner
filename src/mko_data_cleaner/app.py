@@ -113,7 +113,7 @@ def list_settings(
         return
 
     files = list_files_in_directory(
-        settings_path, extensions=("yaml", "yml"), include_subfolders=False
+        settings_path, extensions=("json5",), include_subfolders=False
     )
     if not files:
         console.print("[yellow]No settings files found[/yellow]")
@@ -131,8 +131,8 @@ def process_data(
 
     Synchronous entry point for non-CLI contexts (Jupyter / Airflow).
     ``report_path`` must reference an existing directory (the report folder).
-    User settings are loaded lazily via the factory; if ``app_config.yaml`` or
-    ``log_config.yaml`` are missing, :class:`SettingsNotInitializedError`
+    User settings are loaded lazily via the factory; if ``app_config.json5`` or
+    ``log_config.json5`` are missing, :class:`SettingsNotInitializedError`
     (a subclass of ``FileNotFoundError``) is raised.
 
     Returns:

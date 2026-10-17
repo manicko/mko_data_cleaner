@@ -41,11 +41,11 @@ class AppService:
 
     @cached_property
     def log_config(self) -> LoggingSettings:
-        return LoggingSettings(**utils.yaml_to_dict(self.app_paths.log_config))
+        return LoggingSettings(**utils.config_to_dict(self.app_paths.log_config))
 
     @cached_property
     def app_config(self) -> DataSettings:
-        config_data = utils.yaml_to_dict(self.app_paths.app_config)
+        config_data = utils.config_to_dict(self.app_paths.app_config)
         try:
             return DataSettings(**config_data)
         except DataValidationError as e:
@@ -307,16 +307,16 @@ def build_app_paths(settings_dir: Path | None = None) -> AppPaths:
 
 
 def _require_settings(app_paths: AppPaths) -> None:
-    """Validate that ``app_config.yaml`` and ``log_config.yaml`` exist.
+    """Validate that ``app_config.json5`` and ``log_config.json5`` exist.
 
     Raises :class:`SettingsNotInitializedError` when either required settings
     file is missing from the user settings directory.
     """
     missing: list[str] = []
     if not app_paths.app_config.exists():
-        missing.append("app_config.yaml")
+        missing.append("app_config.json5")
     if not app_paths.log_config.exists():
-        missing.append("log_config.yaml")
+        missing.append("log_config.json5")
     if missing:
         raise SettingsNotInitializedError(
             user_settings_dir=app_paths.user_settings_dir,

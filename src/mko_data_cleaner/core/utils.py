@@ -4,7 +4,7 @@ from pathlib import Path
 from re import match, sub
 from typing import Any
 
-import yaml
+import json5
 from unidecode import unidecode
 
 from mko_data_cleaner.core.errors import WrongDataSettings
@@ -103,7 +103,7 @@ def clean_names(*names: str) -> list[str]:
 
 def list_files_in_directory(
     path: str | PathLike[str],
-    extensions: tuple[str, ...] = ("yaml", "json"),
+    extensions: tuple[str, ...] = ("json5", "json"),
     include_subfolders: bool = False,
 ) -> list[Path]:
     """
@@ -111,7 +111,7 @@ def list_files_in_directory(
 
     Args:
         path (Union[str, PathLike]): The directory path.
-        extensions (Tuple[str, ...]): Allowed file extensions (default: ('csv', 'txt')).
+        extensions (Tuple[str, ...]): Allowed file extensions (default: ('json5', 'json')).
         include_subfolders (bool): Whether to include subfolders (default: False).
 
     Returns:
@@ -128,24 +128,21 @@ def list_files_in_directory(
         return []
 
 
-def yaml_to_dict(file: str | PathLike) -> dict[str, Any] | None:
+def config_to_dict(file: str | PathLike) -> dict[str, Any]:
     """
-    Loads configuration from a YAML file.
+    Loads configuration from a JSON5 file.
 
     Args:
-        file (Path): Path to the YAML configuration file.
+        file (Path): Path to the JSON5 configuration file.
 
     Returns:
         Dict[str, Any]: Parsed configuration dictionary, or an empty dict if the file does not exist or is invalid.
     """
     try:
         with open(file, encoding="utf8") as cfg:
-            return yaml.safe_load(cfg) or {}
-    except yaml.YAMLError as err:
+            return json5.load(cfg) or {}
+    except (FileNotFoundError, ValueError) as err:
         logger.error(err)
-        return {}
-    except FileNotFoundError as err:
-        logger.error(f"No such file or directory{file} {err}")
         return {}
 
 

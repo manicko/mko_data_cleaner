@@ -17,10 +17,10 @@ from mko_data_cleaner.core.errors import SettingsNotInitializedError
 from mko_data_cleaner.core.init_service import init_project
 from mko_data_cleaner.core.models import ReportResult
 from mko_data_cleaner.core.paths import APP_DIR, APP_NAME, AppPaths
-from mko_data_cleaner.core.utils import yaml_to_dict
+from mko_data_cleaner.core.utils import config_to_dict
 from mko_data_cleaner.notebook import check_notebook_environment
 
-# Path to the package's shipped settings templates (app_config.yaml / log_config.yaml)
+# Path to the package's shipped settings templates (app_config.json5 / log_config.json5)
 TEMPLATE_SETTINGS_DIR = APP_DIR / "settings"
 
 
@@ -33,7 +33,7 @@ def populated_settings(tmp_path: Path) -> Path:
     user_dir = tmp_path / "userdir"
     settings_subdir = user_dir / "settings"
     settings_subdir.mkdir(parents=True)
-    for name in ("app_config.yaml", "log_config.yaml"):
+    for name in ("app_config.json5", "log_config.json5"):
         shutil.copy2(TEMPLATE_SETTINGS_DIR / name, settings_subdir / name)
     return user_dir
 
@@ -157,7 +157,7 @@ def test_process_data_error_names_initialize_settings(
         process_data(empty_report_dir, settings_dir=empty_settings_dir)
     message = str(exc_info.value)
     assert "initialize_settings()" in message
-    assert "app_config.yaml" in message
+    assert "app_config.json5" in message
 
 
 # --------------------------------------------------------------------------- #
@@ -183,8 +183,8 @@ def test_list_settings_lists_when_dir_exists(populated_settings: Path):
         app, ["list-settings", "--settings-dir", str(populated_settings)]
     )
     assert result.exit_code == 0
-    assert "app_config.yaml" in result.output
-    assert "log_config.yaml" in result.output
+    assert "app_config.json5" in result.output
+    assert "log_config.json5" in result.output
 
 
 def test_list_settings_does_not_raise_when_dir_missing(tmp_path: Path):
@@ -209,8 +209,8 @@ def test_init_cli_creates_settings_in_tmp_dir(tmp_path: Path, monkeypatch):
     assert result.exit_code == 0, result.output
 
     dest = tmp_path / "settings"
-    assert (dest / "app_config.yaml").exists()
-    assert (dest / "log_config.yaml").exists()
+    assert (dest / "app_config.json5").exists()
+    assert (dest / "log_config.json5").exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -237,17 +237,17 @@ def test_process_data_past_gate_does_not_raise_settings_error(
 
 
 # --------------------------------------------------------------------------- #
-# 11-12. yaml_to_dict defense-in-depth
+# 11-12. config_to_dict defense-in-depth
 # --------------------------------------------------------------------------- #
-def test_yaml_to_dict_returns_empty_dict_on_missing_file(tmp_path: Path):
-    result = yaml_to_dict(tmp_path / "does_not_exist.yaml")
+def test_config_to_dict_returns_empty_dict_on_missing_file(tmp_path: Path):
+    result = config_to_dict(tmp_path / "does_not_exist.json5")
     assert result == {}
 
 
-def test_yaml_to_dict_returns_empty_dict_on_invalid_yaml(tmp_path: Path):
-    bad_file = tmp_path / "bad.yaml"
+def test_config_to_dict_returns_empty_dict_on_invalid_json5(tmp_path: Path):
+    bad_file = tmp_path / "bad.json5"
     bad_file.write_text("key: value: extra\n", encoding="utf8")
-    result = yaml_to_dict(bad_file)
+    result = config_to_dict(bad_file)
     assert result == {}
 
 
@@ -320,8 +320,8 @@ def test_initialize_settings_threads_settings_dir(tmp_path: Path):
     user_dir = tmp_path / "myapp"
     result = initialize_settings(settings_dir=user_dir)
     assert result == user_dir / "settings"
-    assert (result / "app_config.yaml").exists()
-    assert (result / "log_config.yaml").exists()
+    assert (result / "app_config.json5").exists()
+    assert (result / "log_config.json5").exists()
 
 
 def test_initialize_settings_force_overwrites(tmp_path: Path):
@@ -329,12 +329,12 @@ def test_initialize_settings_force_overwrites(tmp_path: Path):
     user_dir = tmp_path / "myapp"
     dest = user_dir / "settings"
     dest.mkdir(parents=True)
-    (dest / "app_config.yaml").write_text("stale")
+    (dest / "app_config.json5").write_text("stale")
 
     result = initialize_settings(force=True, settings_dir=user_dir)
-    assert (result / "app_config.yaml").exists()
+    assert (result / "app_config.json5").exists()
     # The template should have overwritten the stale file
-    assert "data_paths" in (result / "app_config.yaml").read_text()
+    assert "data_paths" in (result / "app_config.json5").read_text()
 
 
 # ------------------------------------------------------------------- #
@@ -345,8 +345,8 @@ def test_init_project_with_settings_dir(tmp_path: Path):
     user_dir = tmp_path / "myapp"
     result = init_project(force=True, settings_dir=user_dir)
     assert result == user_dir / "settings"
-    assert (result / "app_config.yaml").exists()
-    assert (result / "log_config.yaml").exists()
+    assert (result / "app_config.json5").exists()
+    assert (result / "log_config.json5").exists()
 
 
 # ------------------------------------------------------------------- #
@@ -362,8 +362,8 @@ def test_init_cli_with_settings_dir(tmp_path: Path):
     )
     assert result.exit_code == 0, result.output
     dest = user_dir / "settings"
-    assert (dest / "app_config.yaml").exists()
-    assert (dest / "log_config.yaml").exists()
+    assert (dest / "app_config.json5").exists()
+    assert (dest / "log_config.json5").exists()
 
 
 # ------------------------------------------------------------------- #
@@ -375,7 +375,7 @@ def test_init_project_none_uses_app_paths(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("mko_data_cleaner.core.init_service.APP_PATHS", tmp_app_paths)
     result = init_project(force=True, settings_dir=None)
     assert result == tmp_path / "settings"
-    assert (result / "app_config.yaml").exists()
+    assert (result / "app_config.json5").exists()
 
 
 # ------------------------------------------------------------------- #
