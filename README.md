@@ -47,13 +47,17 @@ mko-data-cleaner init --force
 ```
 mko_data_cleaner/
 └── settings/
-    ├── app_config.yaml
-    └── log_config.yaml
+    ├── app_config.json5
+    └── log_config.json5
 ```
+
+> **Breaking change:** Settings are stored in JSON5 (`.json5`). Users upgrading
+> from a previous version must re-run `mko-data-cleaner init --force` to
+> regenerate their settings.
 
 ### 2. Настройка
 
-Основные параметры модуля задаются в `app_config.yaml`.
+Основные параметры модуля задаются в `app_config.json5`.
 Настройки словаря для поиска и при в отдельном файле `*.csv`, 
 ниже показан пример словаря. 
 
@@ -66,8 +70,8 @@ from mko_data_cleaner import initialize_settings, process_data
 
 # 1. Инициализировать настройки один раз. Параметр settings_dir опционален —
 #    по умолчанию используется системный каталог platformdirs (внутри него
-#    создаётся settings/). Возвращает путь к каталогу с app_config.yaml и
-#    log_config.yaml — запомните его и передайте дальше в process_data.
+#    создаётся settings/). Возвращает путь к каталогу с app_config.json5 и
+#    log_config.json5 — запомните его и передайте дальше в process_data.
 settings_dir = initialize_settings()  # initialize_settings(settings_dir=Path(...))
 
 # 2. Запустить обработку. process_data() возвращает ReportResult.
@@ -116,7 +120,7 @@ mko-data-cleaner list-settings --settings-dir C:\my\settings
 Опция `--settings-dir DIRECTORY` есть у команд `init`, `run` и `list-settings`.
 Она переопределяет каталог пользовательских настроек: по умолчанию используется
 системный каталог `platformdirs` (внутри него создаётся `settings/` с
-`app_config.yaml` и `log_config.yaml`).
+`app_config.json5` и `log_config.json5`).
 
 ### 4. Пример ноутбука (Jupyter)
 
@@ -158,7 +162,7 @@ YEAR;MONTH;ADVERTISERS;BRANDS;SUBBRANDS;ARTICLE LIST3;ARTICLE LIST4;ADID;MEDIA;C
 | d      | f     | 3                 |       | DELETE ME     |                |             |               |
 | r      | fts   | 3\|5              |       | OZON\|MARKET  | MARKETPLACE    | MARKETPLACE | OZON          |
 
-> Позиции колонок задаются в `app_config.yaml`
+> Позиции колонок задаются в `app_config.json5`
 > (`dict_file_settings.col_indexes`, нумерация с 0). В базовой конфигурации
 > `term` читается из 4-й колонки, а колонка 3 (`value`) при применении правил
 > не используется. Если в вашем словаре нет промежуточной колонки, установите
@@ -191,7 +195,7 @@ YEAR;MONTH;ADVERTISERS;BRANDS;SUBBRANDS;ARTICLE LIST3;ARTICLE LIST4;ADID;MEDIA;C
 - Теги всех совпавших правил `a` **объединяются** (merge) в одну колонку.
 - Все теги автоматически становятся **уникальными**.
 - Теги **сортируются по алфавиту**.
-- Разделитель задаётся в `app_config.yaml` (`dict_file_settings.add_separator`, по умолчанию `", "`).
+- Разделитель задаётся в `app_config.json5` (`dict_file_settings.add_separator`, по умолчанию `", "`).
 
 Принцип работы ADD на основе **пользовательской** добавляемой колонки:
 

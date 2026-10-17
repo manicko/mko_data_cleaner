@@ -30,21 +30,21 @@ everything else is **[code-verified]** by reading the implementation.
 |---|---|---|
 | CLI `mko-data-cleaner init [--force]` | [app.py `init`](../../src/mko_data_cleaner/app.py) | Copies settings templates into the per-user settings directory; reachable without prior settings since the import fix |
 | CLI `mko-data-cleaner run <report_dir> [-v] [--settings-dir DIR]` | [app.py `run`](../../src/mko_data_cleaner/app.py) | `<report_dir>` must exist (`typer` `exists=True`); any exception prints `❌ Ошибка: …` and exits with code 1 |
-| CLI `mko-data-cleaner list-settings [--settings-dir DIR]` | [app.py `list_settings`](../../src/mko_data_cleaner/app.py) | Lists YAML files in the user settings directory; prints a hint if the directory does not exist (does not raise) |
+| CLI `mko-data-cleaner list-settings [--settings-dir DIR]` | [app.py `list_settings`](../../src/mko_data_cleaner/app.py) | Lists JSON5 files in the user settings directory; prints a hint if the directory does not exist (does not raise) |
 | Python `process_data(report_path, settings_dir=None)` | [app.py](../../src/mko_data_cleaner/app.py) | Synchronous; raises `FileNotFoundError` if the path is not a directory; raises `SettingsNotInitializedError` if settings are missing |
 | Python `initialize_settings(force=False, settings_dir=None)` | [app.py](../../src/mko_data_cleaner/app.py) | **Known gap:** `settings_dir` is accepted but not forwarded to `init_project`; settings are always written to the default platformdirs location [runtime-verified] |
 | Console script | [pyproject.toml `[project.scripts]`](../../pyproject.toml) | `mko-data-cleaner = "mko_data_cleaner.app:app"` |
 
 Network access, databases and external services are not involved: the only
-external resources are the local file system and the packaged YAML templates.
+external resources are the local file system and the packaged JSON5 templates.
 
 ## First-Run Behavior (settings gate)
 
 - `import mko_data_cleaner.app` performs **no** filesystem side effects and
   does not configure logging; the service is constructed lazily by
   `get_app_service()` ([app_service.py `get_app_service`](../../src/mko_data_cleaner/core/app_service.py)).
-- `get_app_service()` first validates that `app_config.yaml` **and**
-  `log_config.yaml` exist in the user settings directory and otherwise raises
+- `get_app_service()` first validates that `app_config.json5` **and**
+  `log_config.json5` exist in the user settings directory and otherwise raises
   `SettingsNotInitializedError` (a subclass of `FileNotFoundError`) whose
   message names the missing files and the remediation
   `initialize_settings()` ([errors.py](../../src/mko_data_cleaner/core/errors.py)).
@@ -53,8 +53,8 @@ external resources are the local file system and the packaged YAML templates.
 
 ## Where Settings Live
 
-- Package templates: `src/mko_data_cleaner/settings/app_config.yaml` and
-  `log_config.yaml`, shipped inside the wheel/sdist via
+- Package templates: `src/mko_data_cleaner/settings/app_config.json5` and
+  `log_config.json5`, shipped inside the wheel/sdist via
   `[tool.setuptools.package-data]` ([pyproject.toml](../../pyproject.toml),
   [MANIFEST.in](../../MANIFEST.in)).
 - User settings directory: `platformdirs.user_config_dir("mko_data_cleaner")`
@@ -63,7 +63,7 @@ external resources are the local file system and the packaged YAML templates.
   [runtime-verified]. `init` copies the templates there
   ([init_service.py `_copy_templates`](../../src/mko_data_cleaner/core/init_service.py)).
 - `run`/`process_data` accept `--settings-dir` / `settings_dir` to override
-  the base directory; the YAMLs are then expected at
+  the base directory; the JSON5 files are then expected at
   `<settings_dir>/settings/` ([build_app_paths](../../src/mko_data_cleaner/core/app_service.py)).
 
 ## Expected Input: The Report Directory
@@ -127,7 +127,7 @@ Default layout (all paths relative to the report directory; configured in
   from dictionary column index **4**, and column index **3 is not used by the
   rules** (the owner's own dictionaries carry intermediate data there). The
   README example now mirrors the base configuration, and documents that the
-  positions come from `col_indexes` in `app_config.yaml` — a user whose
+  positions come from `col_indexes` in `app_config.json5` — a user whose
   dictionary has no intermediate column sets `term: 3` instead. See
   [open-questions.md](open-questions.md) D-1 / decision D12
   [code-verified + runtime-verified].
@@ -267,7 +267,7 @@ carries an explicit limitation note. See
 | Clean data | `<report>/clean_data/data_table_<timestamp>_<N>.csv.gz` | `;`-separated, header, gzip, all values as text; one file per `export_settings.to_csv.chunk_size` rows |
 | Non-mapped data | `<report>/null_data_<timestamp>_<N>.csv.gz` | distinct search+extra combinations where any extra column is NULL; if the non-mapped set is empty, no file is written. **Purpose (owner-confirmed D14):** dictionary-improvement feedback only — not a data-quality report, warning, or error signal [runtime-verified] |
 | Database | `<report>/data_base/db_example.db` | deleted at the end of the run |
-| Logs | user settings directory `log.log` (RotatingFileHandler, 2 MB × 2) + console | via `log_config.yaml` |
+| Logs | user settings directory `log.log` (RotatingFileHandler, 2 MB × 2) + console | via `log_config.json5` |
 
 Note: `process_data` currently returns `None`; the result object (paths +
 timings + row counts) is owner-confirmed but not implemented — see
@@ -283,8 +283,8 @@ timings + row counts) is owner-confirmed but not implemented — see
 | `process_data` with a file path or missing dir | `FileNotFoundError("Directory not found: …")` | [app.py `process_data`](../../src/mko_data_cleaner/app.py) |
 | No raw files with the configured extension | `WrongDataSettings` with a "check settings" message | [`_set_files_params`](../../src/mko_data_cleaner/core/csv_service.py) [runtime-verified] |
 | Ragged CSV row (more fields than the header) | Polars `ComputeError` aborts the run (no `truncate_ragged_lines` configured) | [runtime-verified] |
-| Invalid `app_config.yaml` contents | Pydantic validation error wrapped in `ConfigError` | [app.py `app_config` property](../../src/mko_data_cleaner/core/app_service.py) |
-| Missing/invalid YAML file read by `yaml_to_dict` | Returns `{}` (defense in depth) | [utils.py `yaml_to_dict`](../../src/mko_data_cleaner/core/utils.py) [tested] |
+| Invalid `app_config.json5` contents | Pydantic validation error wrapped in `ConfigError` | [app.py `app_config` property](../../src/mko_data_cleaner/core/app_service.py) |
+| Missing/invalid JSON5 file read by `config_to_dict` | Returns `{}` (defense in depth) | [utils.py `config_to_dict`](../../src/mko_data_cleaner/core/utils.py) [tested] |
 | Header names that are not valid SQL identifiers | Cleaned (transliterated, alphanumerics kept) with a warning | [`clean_names`](../../src/mko_data_cleaner/core/utils.py) [runtime-verified] |
 | Configured `date_column` missing | ERROR log, then auto-detection; if none found, no date column is used | [runtime-verified] |
 | Invalid FTS dictionary row | Warning, rule skipped | [`_build_fts_query`](../../src/mko_data_cleaner/core/dict_service.py) |
@@ -295,7 +295,7 @@ timings + row counts) is owner-confirmed but not implemented — see
 
 ## Configuration That Affects Behavior
 
-`app_config.yaml` ([template](../../src/mko_data_cleaner/settings/app_config.yaml),
+`app_config.json5` ([template](../../src/mko_data_cleaner/settings/app_config.json5),
 [Pydantic models](../../src/mko_data_cleaner/core/models.py)):
 
 | Key | Effect |
@@ -311,7 +311,7 @@ timings + row counts) is owner-confirmed but not implemented — see
 | `read_settings.from_csv.*` | Polars CSV reader options (separator `;`, decimal comma, …) |
 | `export_settings.to_csv.*` | Polars CSV writer options (chunk size, compression, …) |
 
-`log_config.yaml` configures the logging handlers/formatters and is applied by
+`log_config.json5` configures the logging handlers/formatters and is applied by
 the factory at service construction. It still contains the unused `tests` and
 `telebot` logger entries (leftover from another project) — see
 [open-questions.md](open-questions.md) D-8.

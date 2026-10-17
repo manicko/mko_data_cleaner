@@ -38,7 +38,7 @@ referenced or required) and runs the full clean → map → export cycle.
 | 3 | markdown | | "Import the library and public API" |
 | 4 | code | | Imports + `__version__` + `process_data` docstring |
 | 5 | markdown | | "Initialize settings" |
-| 6 | code | | `initialize_settings(settings_dir=tempdir)` → `app_config.yaml` + `log_config.yaml` |
+| 6 | code | | `initialize_settings(settings_dir=tempdir)` → `app_config.json5` + `log_config.json5` |
 | 6b | code | | Config override: `index_column=ADID`; `date_column` key dropped (see Troubleshooting) |
 | 7 | markdown | | "Expected report directory layout" |
 | 8 | code | | Print the layout tree |
@@ -123,10 +123,10 @@ Null-data extract (`null_data_*.csv.gz`) — 2 rows (`BRANDS;tag`): `Orange;null
   That tag is only cut in a later release step. Until then, use the local dev install
   (`uv sync`) and run the notebook in that environment.
 - **`AttributeError: 'OutStream' object has no attribute 'reconfigure'` (should not occur).** Fixed in the package: `mko_data_cleaner.app` guards the import-time `sys.stdout.reconfigure(line_buffering=True)` call with `hasattr(sys.stdout, "reconfigure")`, so ipykernel's `OutStream` is skipped and the package imports under a real kernel with **no notebook shim** required (line buffering is irrelevant inside a kernel).
-- **`SettingsNotInitializedError` / `FileNotFoundError: app_config.yaml`.** Run
+- **`SettingsNotInitializedError` / `FileNotFoundError: app_config.json5`.** Run
   cell 6 (`initialize_settings`) before cell 12 (`process_data`).
 - **`DataSettings` validation error on `date_column`.** The model field
-  `date_column: str = None` is not `Optional`; an explicit YAML `null` raises a
+  `date_column: str = None` is not `Optional`; an explicit JSON5 `null` raises a
   `ValidationError`. Cell 6b **drops** the `date_column` key (letting the
   default `None` apply) instead of assigning `None`, which yields the intended
   "no date column" behavior without triggering validation.

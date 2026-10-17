@@ -30,7 +30,7 @@ flowchart LR
     CLI --> Svc[AppService]
     API --> Svc
     Svc --> FS[("Report directory<br/>raw_data/ dict/ clean_data/ null_data_*")]
-    Svc --> Cfg[("User settings directory<br/>app_config.yaml log_config.yaml")]
+    Svc --> Cfg[("User settings directory<br/>app_config.json5 log_config.json5")]
     MS[Mediascope TV / TV_REG portal] -.->|"manual export"| Analyst
 ```
 
@@ -53,7 +53,7 @@ flowchart TD
         DB["db_service.py — DBWorker<br/>SQLite schema, matching, rule application"]
         MODELS["models.py — Pydantic settings + StrEnums"]
         PATHS["paths.py — platformdirs + PathResolver"]
-        UTILS["utils.py — names, progress, yaml, files"]
+        UTILS["utils.py — names, progress, json5, files"]
         ERR["errors.py — exception types"]
         INIT["init_service.py — settings templates copy"]
     end
@@ -89,9 +89,9 @@ Call direction is strictly `app.py → core/*`; no core module imports `app.py`
 | `core/db_service.py` | SQLite schema and all rule execution: table creation, indexing, match computation (LIKE + FTS5), DELETE/REPLACE/ADD application, non-mapped extraction, synchronization, cleanup | `DBWorker` |
 | `core/models.py` | Pydantic v2 configuration models and `StrEnum` constants (`ActionType`, `MatchType`, `MappingColumns`) | — |
 | `core/paths.py` | Settings/report path resolution (`platformdirs`), directory/file helpers | `PathResolver`, `AppPaths`, `APP_PATHS` |
-| `core/utils.py` | SQL-identifier hygiene, YAML loading, file listing, progress bar | — |
+| `core/utils.py` | SQL-identifier hygiene, JSON5 loading, file listing, progress bar | — |
 | `core/errors.py` | Exception hierarchy (`WrongDataSettings`, `ConfigError`, `SettingsNotInitializedError`, …) | — |
-| `core/init_service.py` | Copies the packaged YAML templates into the user settings directory | `init_project` |
+| `core/init_service.py` | Copies the packaged JSON5 templates into the user settings directory | `init_project` |
 
 ## Per-Key Rule Resolution (intended design, owner decision D15)
 
@@ -180,12 +180,12 @@ Runtime dependencies ([pyproject.toml](../../pyproject.toml)):
 | `pydantic` | Settings validation and StrEnums |
 | `pydantic-settings` (unused residue) | Declared in `pyproject.toml` but not imported in `src/` |
 | `platformdirs` | Per-user settings directory location |
-| `PyYAML` | Settings files |
+| `json5` | Settings files |
 | `Unidecode` | Transliteration of column names |
 
-Configuration files: `app_config.yaml` (paths, extensions, index/date columns,
+Configuration files: `app_config.json5` (paths, extensions, index/date columns,
 dictionary column indexes, separators, CSV reader/writer options) and
-`log_config.yaml` (logging). See
+`log_config.json5` (logging). See
 [current-behavior.md](current-behavior.md) for the key-by-key effects.
 
 ## Key Scenario: `process_data(report_dir)`

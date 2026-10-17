@@ -28,7 +28,7 @@ see [current-behavior.md](current-behavior.md).
 |---|---|---|
 | Raw Mediascope export files | `.csv` (or `.gz`), `;`-separated, upper-case values, first row = headers | Downloaded manually from Mediascope (TV / TV_REG reports) — the tool never contacts Mediascope |
 | Dictionary | `.csv`, `;`-separated; column **positions** (not names) carry the meaning, configured via `col_indexes` | Maintained by the analyst; may be produced by merging several dictionary files |
-| Settings | `app_config.yaml` + `log_config.yaml` per user (packaged templates, edited after `init`) | Shipped inside the package |
+| Settings | `app_config.json5` + `log_config.json5` per user (packaged templates, edited after `init`) | Shipped inside the package |
 
 Original files are never modified: the tool only reads `raw_data/` and the
 dictionary, and writes new files (`clean_data/`, `null_data_*`). The SQLite

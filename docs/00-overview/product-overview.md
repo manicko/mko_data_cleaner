@@ -77,17 +77,17 @@ The product owner is the sole maintainer today
 |---|---|---|
 | Report directory | The folder passed to `run` / `process_data`; contains the input and receives the output | [current-behavior.md](current-behavior.md) |
 | Raw data | CSV (optionally `.gz`) files in the report's `raw_data/` folder | [WorkingPaths](../../src/mko_data_cleaner/core/models.py) |
-| Dictionary | User-maintained CSV of rules (`merged_dictionary.csv`); column positions are configured in `app_config.yaml` | [dict_service.py](../../src/mko_data_cleaner/core/dict_service.py) |
+| Dictionary | User-maintained CSV of rules (`merged_dictionary.csv`); column positions are configured in `app_config.json5` | [dict_service.py](../../src/mko_data_cleaner/core/dict_service.py) |
 | Rule | One dictionary row: an action (`a`/`r`/`d`), a match type, a search column, a term, and the values to write | [ActionType / MatchType](../../src/mko_data_cleaner/core/models.py) |
 | Extra column | Analyst-defined output column declared by the dictionary (e.g. `BRAND CLEANED`) | [dict_service.py `_initialize_mapping`](../../src/mko_data_cleaner/core/dict_service.py) |
 | Clean data | Exported result table (all source columns + extra columns) in `clean_data/` | [export_sql_to_csv](../../src/mko_data_cleaner/core/csv_service.py) |
 | Non-mapped ("null") data | Distinct combinations of search/extra columns where any extra column stayed empty; **dictionary-improvement feedback only** — not a data-quality report or error signal (owner decision D14) | [build_non_mapped](../../src/mko_data_cleaner/core/db_service.py) |
-| User settings directory | Per-user folder with `app_config.yaml` + `log_config.yaml`, created by `init` / `initialize_settings()` | [paths.py](../../src/mko_data_cleaner/core/paths.py) |
+| User settings directory | Per-user folder with `app_config.json5` + `log_config.json5`, created by `init` / `initialize_settings()` | [paths.py](../../src/mko_data_cleaner/core/paths.py) |
 
 ## Main Scenarios (as implemented today)
 
 1. **First-time setup** — run `mko-data-cleaner init` (or
-   `initialize_settings()`): copies the packaged YAML templates into the
+    `initialize_settings()`): copies the packaged JSON5 templates into the
    per-user settings directory.
 2. **Prepare a report folder** — place raw export files in `raw_data/` and the
    dictionary in `dict/merged_dictionary.csv` (paths are configurable).
@@ -124,7 +124,7 @@ constraints were investigated and confirmed with the product owner on
 **Status at the time of writing** (see
 [open-questions.md](open-questions.md) for the gap register):
 
-- Done: import-time crash fix (R1), YAML templates shipped in wheel/sdist
+- Done: import-time crash fix (R1), JSON5 templates shipped in wheel/sdist
   (R2), dedicated missing-settings error (D2), English strings in the new CLI
   messages, `list_settings` repointed (D5).
 - Not done: top-level package re-exports (`__init__.py` is empty), the result
