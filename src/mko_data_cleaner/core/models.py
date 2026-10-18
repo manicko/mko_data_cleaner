@@ -203,5 +203,5 @@ class ReportResult(BaseModel):
     timings: dict[str, float]
 
     # --- row counts ---
-    rows_loaded: int
-    rows_exported: int
+    rows_loaded: NonNegativeInt
+    rows_exported: NonNegativeInt

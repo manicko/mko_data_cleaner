@@ -64,6 +64,7 @@ def test_pattern_generation(sample_dictionary, dict_indexes):
     assert "COCA-COLA" in patterns, "FULL_MATCH should produce term without %"
     assert "%КАНАЛ%" in patterns, "PARTIAL_MATCH should wrap term in %...%"
     assert "ПЕРВЫЙ%" in patterns, "STARTS_WITH should produce term%"
+    assert "%КОЛА" in patterns, "ENDS_WITH should produce %term (leading % only)"
 
     # Verify column_name is correctly mapped from the search index
     assert "channelName" in column_names
@@ -174,3 +175,54 @@ def test_build_query_no_strict_column(sample_dictionary, dict_indexes):
         extra_col_names=["brand_normalized"],
     )
     assert "strict" not in mapping.like_data.columns
+
+
+def test_generate_rules_blocks_ordering(dict_indexes):
+    """generate_rules_blocks yields DELETE before REPLACE before ADD,
+    and REPLACE groups respect group_by_cols output order."""
+    data = [
+        ["d", "f", 3, None, "Удалить", None],           # DELETE
+        ["r", "f", 1, None, "Apple", "replace_1"],        # REPLACE group 1 (tag non-null)
+        ["r", "f", 1, None, "Sam", "replace_2"],          # REPLACE group 1 (tag non-null)
+        ["r", "f", 4, None, "Banana", None],              # REPLACE group 2 (tag null → diff keys)
+        ["a", "f", 3, None, "Coca-Cola", "brand"],        # ADD
+    ]
+    df = pl.DataFrame(
+        data,
+        schema=["action", "match", "search", "extra_col", "term", "tag"],
+        orient="row",
+    )
+    mapping_dict = MappingDict(data=df, action_col_indexes=dict_indexes)
+    mapping_dict.build_mapping(
+        "adId",
+        "researchDate",
+        "programName",
+        "channelName",
+        "brand",
+        extra_col_names=["tag"],
+    )
+    blocks = list(mapping_dict.generate_rules_blocks())
+    action_order = [action for action, _ in blocks]
+    # DELETE before REPLACE before ADD
+    assert action_order.index("d") < action_order.index("r")
+    assert action_order.index("r") < action_order.index("a")
+    # REPLACE blocks should be grouped (group_by_cols)
+    replace_blocks = [i for i, (action, _) in enumerate(blocks) if action == "r"]
+    assert len(replace_blocks) == 2  # two REPLACE groups by column set
+
+
+def test_build_match_query_format(sample_dictionary, dict_indexes):
+    """build_match_query produces exact col:"(value)" format with quote/paren wrapping."""
+    mapping_dict = MappingDict(data=sample_dictionary, action_col_indexes=dict_indexes)
+    mapping_dict.build_mapping(
+        "adId",
+        "researchDate",
+        "programName",
+        "channelName",
+        "brand",
+        extra_col_names=["tag"],
+    )
+    result = mapping_dict.build_match_query([0, 1], ["Apple", "Company"])
+    assert result == 'adId:"(Apple)" researchDate:"(Company)"'
+    assert "adId" in mapping_dict.search_columns
+    assert "researchDate" in mapping_dict.search_columns

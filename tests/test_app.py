@@ -400,3 +400,50 @@ def test_process_data_end_to_end(populated_settings: Path, synthetic_report: Pat
     assert result.duration > 0.0
     assert set(result.timings.keys()) == {"import", "mapping", "export"}
     assert all(v >= 0.0 for v in result.timings.values())
+
+
+# ------------------------------------------------------------------- #
+# B4: nonexistent directory raises FileNotFoundError
+# ------------------------------------------------------------------- #
+def test_process_data_nonexistent_directory_raises_filenotfound(populated_settings):
+    """process_data raises FileNotFoundError for a path that doesn't exist."""
+    nonexistent = Path("/nonexistent/path/that/does/not/exist")
+    with pytest.raises(FileNotFoundError, match="Directory not found"):
+        process_data(nonexistent, settings_dir=populated_settings)
+
+
+# ------------------------------------------------------------------- #
+# B4: CLI run success (end-to-end via CliRunner)
+# ------------------------------------------------------------------- #
+def test_run_cli_success(populated_settings, synthetic_report):
+    """CLI run command succeeds with populated settings and valid data."""
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["run", str(synthetic_report), "--settings-dir", str(populated_settings)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Report complete" in result.output
+    assert "3 loaded → 2 clean" in result.output
+
+
+# ------------------------------------------------------------------- #
+# B4: ReportResult rejects negative row counts (NonNegativeInt validation)
+# ------------------------------------------------------------------- #
+def test_report_result_rejects_negative_row_counts():
+    """ReportResult rejects negative row counts with ValidationError."""
+    common = dict(
+        report_dir=Path("/tmp/report"),
+        import_dir=Path("/tmp/raw_data"),
+        export_dir=Path("/tmp/clean_data"),
+        db_path=Path("/tmp/test.db"),
+        null_data_files=[],
+        started_at=datetime(2026, 1, 1, 12, 0, 0),
+        finished_at=datetime(2026, 1, 1, 12, 0, 5),
+        duration=5.0,
+        timings={"import": 1.0, "mapping": 2.0, "export": 2.0},
+    )
+    with pytest.raises(ValidationError):
+        ReportResult(rows_loaded=-1, rows_exported=95, **common)
+    with pytest.raises(ValidationError):
+        ReportResult(rows_loaded=100, rows_exported=-5, **common)

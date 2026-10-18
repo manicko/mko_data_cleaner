@@ -6,9 +6,23 @@ from mko_data_cleaner.core.csv_service import CSVWorker
 
 
 def test_get_files_suffix():
+    # Existing assertions
     assert CSVWorker.get_files_suffix("gzip") == ".csv.gz"
     assert CSVWorker.get_files_suffix("bz2") == ".csv.bz2"
     assert CSVWorker.get_files_suffix(None) == ".csv"
+    # Pre-match branches
+    assert CSVWorker.get_files_suffix("infer") == ".csv"  # line 245
+    assert CSVWorker.get_files_suffix({"method": "gzip"}) == ".csv.gz"  # line 247 (dict-form)
+    # Match cases
+    assert CSVWorker.get_files_suffix("xz") == ".csv.xz"  # line 256
+    assert CSVWorker.get_files_suffix("zip") == ".csv.zip"  # line 258
+    assert CSVWorker.get_files_suffix("zstd") == ".csv.zst"  # line 260
+    assert CSVWorker.get_files_suffix("gz") == ".csv.gz"  # alias for gzip
+    # Default fallback
+    assert CSVWorker.get_files_suffix("unknown") == ".csv"  # line 262
+    assert CSVWorker.get_files_suffix("csv") == ".csv"  # default
+    assert CSVWorker.get_files_suffix("json") == ".csv"  # default
+    assert CSVWorker.get_files_suffix("parquet") == ".csv"  # default
 
 
 def test_is_date_column():
