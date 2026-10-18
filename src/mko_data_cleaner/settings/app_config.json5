@@ -1,31 +1,30 @@
 {
-  'data_paths': {
-    'import_folder': 'raw_data',
-    'export_folder': 'clean_data',
-    'dict_file': 'dict/merged_dictionary.csv',
-    'db_file': 'data_base/db_example.db'
+  "data_paths": {
+    "import_folder": "raw_data",
+    "export_folder": "clean_data",
+    "dict_file": "dict/merged_dictionary.csv",
+    "db_file": 'data_base/db_example.db'
   },
-  'data_file_settings': {
-    'extension': 'gz', // data files'  extension
-    'index_column': 'AdId',
-    'date_column': 'researchDate' //'researchDate' researchMonth
+  "data_file_settings": {
+    "extension": "gz", // data files'  extension
+    "index_column": "AdId",
+    "date_column": 'researchDate' //'researchDate' researchMonth
   },
-  'dict_file_settings': {
-    'extension': 'gz',
-    'add_separator': ', ',
-    'fts_separator': '|',
-    'col_indexes': { // columns' indexes in the mapping dictionary containing settings
-      'action': 0,  // update or delete setting
-      'match': 1,
-      'search': 2,
-      'term': 4  // search string used after match setting in the SQL query
-    },
+  "dict_file_settings": {
+    "extension": "gz",
+    "add_separator": ", ",
+    "fts_separator": "|",
+    "col_indexes": { // columns' indexes in the mapping dictionary containing settings
+      "action": 0, // update or delete setting
+      "match": 1,
+      "search": 2,
+      "term": 4 // search string used after match setting in the SQL query
+    }
   },
-
-  'database_settings': {
-    'table_name': 'data_table'
+  "database_settings": {
+    "table_name": 'data_table'
   },
-  'read_settings': { // general settings for polars CSV reader
+  "read_settings": { // general settings for polars CSV reader
     "from_csv": {
       "separator": ";",
       "encoding": "utf8",
@@ -33,10 +32,10 @@
       "skip_rows": 0,
       "has_header": true,
       "ignore_errors": false,
-      "infer_schema_length":false
+      "infer_schema_length": false
     }
   },
-  'export_settings': {
+  "export_settings": {
     "to_csv": {
       "chunk_size": 100000,
       "include_bom": true,
