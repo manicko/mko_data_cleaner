@@ -80,46 +80,6 @@ def extra_cols():
 
 
 @pytest.fixture
-def sample_mapping_df():
-    """Reserved for future integration tests of ``group_by_cols``.
-
-    No current consumer (TST-016).
-    """
-    return pl.DataFrame(
-        {
-            "action": ["a", "r", "d"],
-            "match": ["f", "p", "s"],
-            "search": [0, 1, 0],
-            "term": ["Apple", "Sam", "Test"],
-            "tag": ["fruit", "brand", "delete"],
-        }
-    )
-
-
-@pytest.fixture
-def tmp_db_path(tmp_path: Path) -> Path:
-    """Path to a temporary sqlite database file.
-
-    Reserved for future integration tests. No current consumer (TST-016).
-    """
-    return tmp_path / "test_database.db"
-
-
-@pytest.fixture
-def db_worker_memory(tmp_path):
-    """DBWorker backed by an on-disk sqlite file (``tmp_path``).
-
-    Reserved for future integration tests that need an isolated worker.
-    No current consumer (TST-016).
-    """
-
-    db_file = tmp_path / "memory.db"
-
-    with DBWorker(db_file=db_file, tbl_name="data_table", index_column="id") as worker:
-        yield worker
-
-
-@pytest.fixture
 def synthetic_report(tmp_path: Path) -> Path:
     """Create a tiny synthetic report directory for end-to-end tests.
 
@@ -128,7 +88,6 @@ def synthetic_report(tmp_path: Path) -> Path:
     data or the assertions change, update ALL copies:
       1. scripts/smoke_install.py (maintenance comment)
       2. tests/test_app.py::test_process_data_end_to_end
-      3. tests/test_app.py::test_null_data_files_excludes_stale
     Shared assertions: rows_loaded==3, rows_exported==2,
     export_dir/import_dir/report_dir resolved, export dir exists with
     .gz files, null_data_files is list, duration>0, timings keys.

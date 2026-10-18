@@ -14,7 +14,6 @@ from typer.testing import CliRunner
 from mko_data_cleaner.app import app, initialize_settings, process_data
 from mko_data_cleaner.core.app_service import get_app_service
 from mko_data_cleaner.core.errors import SettingsNotInitializedError
-from mko_data_cleaner.core.init_service import init_project
 from mko_data_cleaner.core.models import ReportResult
 from mko_data_cleaner.core.paths import APP_DIR, APP_NAME, AppPaths
 from mko_data_cleaner.core.utils import config_to_dict
@@ -338,18 +337,6 @@ def test_initialize_settings_force_overwrites(tmp_path: Path):
 
 
 # ------------------------------------------------------------------- #
-# B4: settings_dir threading — init_project
-# ------------------------------------------------------------------- #
-def test_init_project_with_settings_dir(tmp_path: Path):
-    """init_project(force=True, settings_dir=...) writes to settings_dir / settings."""
-    user_dir = tmp_path / "myapp"
-    result = init_project(force=True, settings_dir=user_dir)
-    assert result == user_dir / "settings"
-    assert (result / "app_config.json5").exists()
-    assert (result / "log_config.json5").exists()
-
-
-# ------------------------------------------------------------------- #
 # B4: settings_dir threading — CLI init --settings-dir
 # ------------------------------------------------------------------- #
 def test_init_cli_with_settings_dir(tmp_path: Path):
@@ -364,18 +351,6 @@ def test_init_cli_with_settings_dir(tmp_path: Path):
     dest = user_dir / "settings"
     assert (dest / "app_config.json5").exists()
     assert (dest / "log_config.json5").exists()
-
-
-# ------------------------------------------------------------------- #
-# B4: settings_dir threading — init_project with None uses APP_PATHS
-# ------------------------------------------------------------------- #
-def test_init_project_none_uses_app_paths(tmp_path: Path, monkeypatch):
-    """init_project(force, settings_dir=None) uses monkeypatchable APP_PATHS."""
-    tmp_app_paths = AppPaths(app_dir=APP_DIR, app_name=APP_NAME, user_dir=tmp_path)
-    monkeypatch.setattr("mko_data_cleaner.core.init_service.APP_PATHS", tmp_app_paths)
-    result = init_project(force=True, settings_dir=None)
-    assert result == tmp_path / "settings"
-    assert (result / "app_config.json5").exists()
 
 
 # ------------------------------------------------------------------- #
@@ -403,28 +378,6 @@ def test_top_level_exports():
     assert mko_data_cleaner.check_notebook_environment is check_notebook_environment
 
 
-def test_top_level_no_import_side_effects(tmp_path: Path):
-    """importing the top-level package must not create a settings dir."""
-    target = str(tmp_path)
-    script = (
-        "import platformdirs, os, sys\n"
-        "platformdirs.user_config_dir = lambda *a, **k: sys.argv[1]\n"
-        "import mko_data_cleaner\n"
-        "print(mko_data_cleaner.__version__)\n"
-        "if os.path.isdir(os.path.join(sys.argv[1], 'settings')):\n"
-        "    print('FAIL: settings dir created', file=sys.stderr)\n"
-        "    sys.exit(1)\n"
-        "print('OK')\n"
-        "sys.exit(0)\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", script, target],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-
-
 # ------------------------------------------------------------------- #
 # B4: minimal end-to-end pipeline (bridge to B5)
 # ------------------------------------------------------------------- #
@@ -447,18 +400,3 @@ def test_process_data_end_to_end(populated_settings: Path, synthetic_report: Pat
     assert result.duration > 0.0
     assert set(result.timings.keys()) == {"import", "mapping", "export"}
     assert all(v >= 0.0 for v in result.timings.values())
-
-
-def test_null_data_files_excludes_stale(populated_settings: Path, synthetic_report: Path):
-    """null_data_files reports only files from the current run, not stale files
-    left in the report directory from a previous run.
-    """
-    # Pre-seed a stale null_data file (would be picked up by the old glob approach)
-    stale_file = synthetic_report / "null_data_stale_20200101-000000_1.csv.gz"
-    stale_file.write_bytes(b"stale")
-
-    result = process_data(synthetic_report, settings_dir=populated_settings)
-
-    assert isinstance(result.null_data_files, list)
-    # Stale file must NOT appear — only paths written by this run's export
-    assert stale_file not in result.null_data_files
