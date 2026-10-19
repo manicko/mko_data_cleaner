@@ -52,7 +52,14 @@ def sample_dictionary():
         ["r", "s", 1, None, "Первый", "channelName"],
         ["d", "f", 5, None, "Удалить", None],
         ["a", "f", 4, None, "Спонсор", "sponsor_tag"],
-        ["a", "e", 3, None, "Кола", "cola_end"],  # ENDS_WITH → channelName, pattern "%КОЛА"
+        [
+            "a",
+            "e",
+            3,
+            None,
+            "Кола",
+            "cola_end",
+        ],  # ENDS_WITH → channelName, pattern "%КОЛА"
         ["a", "fts", "0|1", None, "Apple|Company", "fruit_tag"],
     ]
 

@@ -381,8 +381,8 @@ def test_pyarrow_broken_guard_raises_actionable_error(tmp_path: Path):
 
     env = os.environ.copy()
     existing_pp = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        str(fake_site) + (os.pathsep + existing_pp if existing_pp else "")
+    env["PYTHONPATH"] = str(fake_site) + (
+        os.pathsep + existing_pp if existing_pp else ""
     )
 
     result = subprocess.run(
@@ -418,8 +418,7 @@ def test_apply_delete_executes_delete_once(db_worker, mocker):
         db_worker.perform_query(insert_q, (ad_id, "BrandX", None))
 
     rowids = [
-        r[0]
-        for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
+        r[0] for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
     ]
     assert len(rowids) == 3
 
@@ -446,8 +445,7 @@ def test_apply_delete_executes_delete_once(db_worker, mocker):
 
     # --- assert: matched row gone, unmatched rows remain ---
     remaining = [
-        r[0]
-        for r in db_worker.db_con.execute(f"SELECT rowid FROM {target}").fetchall()
+        r[0] for r in db_worker.db_con.execute(f"SELECT rowid FROM {target}").fetchall()
     ]
     assert rowids[0] not in remaining
     assert len(remaining) == 2
@@ -474,8 +472,7 @@ def test_apply_replace_picks_highest_mapping_index(db_worker, mocker):
         db_worker.perform_query(insert_q, (ad_id, "BrandX", None))
 
     rowids = [
-        r[0]
-        for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
+        r[0] for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
     ]
     assert len(rowids) == 3
 
@@ -543,8 +540,7 @@ def test_apply_add_concatenates_tags(db_worker, mocker):
         db_worker.perform_query(insert_q, (ad_id, "BrandX", None))
 
     rowids = [
-        r[0]
-        for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
+        r[0] for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
     ]
     assert len(rowids) == 3
 
