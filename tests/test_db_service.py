@@ -171,6 +171,25 @@ def test_column_index_and_get_col_names(db_worker):
     assert db_worker.get_col_names(99) is None
 
 
+def test_column_index_reflects_second_set_data_tbl_columns(db_worker):
+    """``set_data_tbl_columns`` must invalidate the ``column_index`` cache.
+
+    Regression test for the latent bug where ``column_index`` (``@cached_property``)
+    retained stale column mappings after a second ``set_data_tbl_columns`` call
+    reassigned ``self._data_tbl_columns`` without cache invalidation.
+    """
+    # First set
+    db_worker.set_data_tbl_columns("id", "name")
+    assert db_worker.column_index == {0: "id", 1: "name"}
+    # Access to trigger caching
+
+    # Second set with different columns
+    db_worker.set_data_tbl_columns("id", "name", "value", "tag")
+    assert db_worker.column_index == {0: "id", 1: "name", 2: "value", 3: "tag"}
+    assert db_worker.get_col_names(2) == "value"
+    assert db_worker.get_col_names(3) == "tag"
+
+
 def test_add_columns(db_worker):
     """Covers bulk addition of columns of different types."""
     db_worker.create_table("test_table", "col1")
@@ -500,6 +519,75 @@ def test_apply_replace_picks_highest_mapping_index(db_worker, mocker):
     for rid in rowids[1:]:
         result = db_worker.db_con.execute(
             f"SELECT sponsor FROM {target} WHERE rowid = ?",
+            (rid,),
+        ).fetchone()
+        assert result[0] is None
+
+
+def test_apply_add_concatenates_tags(db_worker, mocker):
+    """``_apply_add`` populates extra columns with GROUP_CONCAT of distinct tag values.
+
+    Modeled on ``test_apply_replace_picks_highest_mapping_index``: sets up a target
+    table with rows and a TEMP joined_matches_table referencing them, calls the
+    private method, and asserts on the SQL and observable outcome.
+    """
+    # --- arrange: target table with 3 rows, one extra column 'tag' ---
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=["tag"])
+    db_worker.create_table(db_worker.data_tbl_name, "adId", "brand", "tag")
+    db_worker.search_columns = ["brand"]
+
+    target = db_worker.target_table
+
+    insert_q = f"INSERT INTO {target} (adId, brand, tag) VALUES (?, ?, ?)"
+    for ad_id in ("ad1", "ad2", "ad3"):
+        db_worker.perform_query(insert_q, (ad_id, "BrandX", None))
+
+    rowids = [
+        r[0]
+        for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
+    ]
+    assert len(rowids) == 3
+
+    # TEMP joined_matches_table with 2 tag entries for the first row
+    db_worker.perform_query(
+        f"CREATE TEMP TABLE {db_worker._joined_matches_table} "
+        f"(data_rowid INTEGER, mapping_index INTEGER, tag TEXT)"
+    )
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker._joined_matches_table} "
+        f"(data_rowid, mapping_index, tag) VALUES (?, ?, ?)",
+        (rowids[0], 1, "fruit_tag"),
+    )
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker._joined_matches_table} "
+        f"(data_rowid, mapping_index, tag) VALUES (?, ?, ?)",
+        (rowids[0], 2, "sponsor_tag"),
+    )
+
+    # --- arrange: ensure tags table exists before spying ---
+    db_worker._ensure_tags_table()
+
+    # --- act: spy BEFORE the call-under-test ---
+    spy = mocker.spy(db_worker, "perform_query")
+
+    db_worker._apply_add(separator=", ")
+
+    # --- assert: INSERT into data_table_tags ---
+    insert_call = spy.call_args_list[0].args[0]
+    assert "INSERT OR IGNORE INTO data_table_tags" in insert_call
+
+    # --- assert: target table tag column populated with concatenated values ---
+    # GROUP_CONCAT DISTINCT value ORDER BY value → "fruit_tag, sponsor_tag"
+    result = db_worker.db_con.execute(
+        f"SELECT tag FROM {target} WHERE rowid = ?",
+        (rowids[0],),
+    ).fetchone()
+    assert result[0] == "fruit_tag, sponsor_tag"
+
+    # --- assert: unmatched rows remain unchanged ---
+    for rid in rowids[1:]:
+        result = db_worker.db_con.execute(
+            f"SELECT tag FROM {target} WHERE rowid = ?",
             (rid,),
         ).fetchone()
         assert result[0] is None

@@ -137,6 +137,7 @@ class DBWorker:
             self._extra_columns = self.data_tbl_columns[-len(extra_cols) :]
         else:
             self._extra_columns = []
+        self.__dict__.pop("column_index", None)
 
     # ---------------------------------------------------------
     # init logic
