@@ -19,7 +19,7 @@
 - C9. App-layer tests must point `APP_PATHS`/`USER_DIR` at a temp dir (construction has filesystem side effects).
 - C10. Keep the 43 MB `data/example` sample out of package data and out of the notebook.
 - C11. README must stop recommending `mko_data_cleaner.core.app_service.app_service`.
-- Do not introduce unrelated documentation changes; `mko_bazuna/docs/00-overview/doc-maintenance-rules.md` does **not exist** in this repo — README.md is the documentation surface (project rule 14 applies).
+- Do not introduce unrelated documentation changes; `docs/00-overview/doc-maintenance-rules.md` does **not exist** in this repo — README.md is the documentation surface (project rule 14 applies).
 
 ## Block decomposition (dependency order)
 
@@ -776,8 +776,8 @@ NOT stale and stay.
   residue. Do not remove (spec does not ask; scope is minimal).
 - `pytest-django`: audit (`code_context.md`) flagged it as unused dev dependency,
   but it is **NOT present** in the current `[dependency-groups] dev` list (which
-  has `pytest-mock`). The `pytest-django` mention in `.kilo/rules/commands.md:68`
-  is for the mko-bazuna-test Docker/Django project, not this repo. No action needed.
+  has `pytest-mock`). The `pytest-django` mention in `.kilo/rules/commands.md`
+  has been removed during the bazuna documentation cleanup. No action needed.
 
 ---
 
@@ -1096,7 +1096,7 @@ out_of_scope:
   - ".github/ workflow creation (B6/T6 scope)"
   - "src/mko_data_cleaner/core/** — no changes in this block"
   - "pydantic-settings>=2.12.0: declared but never imported — out-of-scope residue, leave untouched"
-  - "pytest-django: not in current dev group (audit discrepancy); .kilo/rules/commands.md reference is for mko-bazuna-test — leave as-is"
+  - "pytest-django: not in current dev group (audit discrepancy); .kilo/rules/commands.md reference removed during documentation cleanup — leave as-is"
   - "settings/ __init__.py: must NOT be added (package-data glob is the mechanism)"
 
 risks:

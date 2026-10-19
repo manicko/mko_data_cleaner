@@ -18,7 +18,7 @@ business consequence. No mechanism, no file names.}
 ## Scope
 
 **Examined:** {which modules, surfaces and behaviours this phase covered}
-**Tools:** {`rg`, `ruff`, `basedpyright`, `psql`, `pytest`}
+**Tools:** {`rg`, `ruff`, `basedpyright`, `pytest`}
 **Not verified:** {what was out of scope or could not be checked — an assumption is a claim}
 
 <!-- FORBIDDEN
@@ -45,8 +45,8 @@ business consequence. No mechanism, no file names.}
 
 | ID | Severity | Anchor | Title |
 |---|---|---|---|
-| QLT-001 | HIGH | `src/backend/apps/ads/models.py::Ad.transition_to` | {one line: component + impact} |
-| QLT-002 | MEDIUM | `src/backend/apps/ads/services/submission.py::submit_ad` | {one line: component + impact} |
+| QLT-001 | HIGH | `src/mko_data_cleaner/core/dict_service.py::MappingDict._build_query` | {one line: component + impact} |
+| QLT-002 | MEDIUM | `src/mko_data_cleaner/core/db_service.py::DBWorker.drop_table` | {one line: component + impact} |
 
 <!-- Repeat per finding, sorted by severity; the index order IS the work order. -->
 <!-- Severity bands and the ID prefix: read the phase file, never invent one. -->
@@ -59,21 +59,21 @@ business consequence. No mechanism, no file names.}
 <!-- **Repro:** required for `ran`, permitted for `static`, omitted for `not-checked`. -->
 <!-- **Verify:** never blank — `path::test_name` or `new test needed: <name>`. -->
 <!-- A shipped test asserting the current behaviour blocks the fix; never drop the finding. -->
-**Anchor:** `src/backend/apps/ads/models.py::Ad.transition_to`
-**Disambiguator:** `"moderator_id"`
+**Anchor:** `src/mko_data_cleaner/core/dict_service.py::MappingDict._build_query`
+**Disambiguator:** `"strict=False"`
 **Checked:** ran
 **Why this band:** {band trigger + the adjacent band NOT graded as; text in the phase file}
 **Problem:** {the defect stated once, in context — not the title again}
 **Repro:** {numbered steps, exact input, exact observed result}
-**Impact:** {consequence for a named audience: sellers, buyers, the on-call developer}
+**Impact:** {consequence for a named audience: the on-call developer, data analysts}
 **Root cause:** {a code or process condition, never a person or a team}
-**Fix:** {concrete change naming its target symbol — move `Ad.transition_to` into the service}
-**Verify:** new test needed: test_transition_to_rejects_illegal_status_jump
-**Related:** QLT-004, AUTZ-002
+**Fix:** {concrete change naming its target symbol — remove `strict=False` from `with_columns` in `_build_query`}
+**Verify:** new test needed: test_build_query_no_strict_column
+**Related:** QLT-004, TST-001
 
-**Evidence — `rg -n 'def transition_to' src/backend/apps/ads/models.py`** *(supports: "one site")*:
+**Evidence — `rg -n 'def _build_query' src/mko_data_cleaner/core/dict_service.py`** *(supports: "one site")*:
 ```text
-src/backend/apps/ads/models.py:363:    def transition_to(
+src/mko_data_cleaner/core/dict_service.py:112:    def _build_query(
 ```
 
 <!-- 1–2 fences per claim; an identical-sites claim shows both, or cites the pair in Appendices. -->

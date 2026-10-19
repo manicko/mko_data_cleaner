@@ -34,7 +34,7 @@ Protect and exclude from the removal candidates:
 * Entry points and externally invoked scripts.
 * Migrations, seeds, fixtures, and generated files.
 * Files referenced dynamically or through non-code mechanisms.
-* Files required by CI, Docker, package managers, build tools, templates, or external integrations.
+* Files required by CI, package managers, build tools, templates, or external integrations.
 
 ## Analysis Method
 

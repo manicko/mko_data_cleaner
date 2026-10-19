@@ -7,9 +7,9 @@ alwaysApply: false
 
 # Test Quality Audit
 
-## Step 0 — Ensure Docker Environment is Running
+## Step 0 — Ensure uv Environment is Ready
 
-Start Docker services in **both development and test modes** (never production) before executing any test commands. Follow the setup instructions in `docs/11-guides/docker.md`. Confirm all required containers are in `running` or `healthy` state before proceeding. If the environment cannot be started, document why and skip dependent steps.
+Run `uv sync --group dev` to install/sync all dependencies. Confirm the Python interpreter is available (`uv run python --version`) before proceeding. This is a standalone local uv project with no Docker or external services.
 
 ## Objective
 
@@ -34,9 +34,9 @@ Label every finding:
 ## Research
 
 Use `websearch` to verify current best practices for:
-- pytest async testing patterns (pytest-asyncio)
-- FastAPI test client patterns (httpx AsyncClient vs TestClient)
-- SQLAlchemy async test fixtures and session management
+- pytest test isolation patterns (tmp_path, SQLite in-memory)
+- Polars DataFrame testing patterns
+- SQLite FTS5 trigger verification in tests
 - Meaningful test coverage metrics vs coverage for its own sake
 
 ## Anti-Patterns (subject to deletion or complete rewrite)
@@ -46,13 +46,14 @@ Use `websearch` to verify current best practices for:
 - Use of deprecated methods, DTOs, data types, or contracts
 - Testing removed or renamed functionality
 - Forces keeping legacy code just to pass tests
-- Tests against old response shapes (e.g., pre-`TokenWithUser` login response)
+- Tests against old data formats (e.g., pre-migration CSV schema)
 
 ### 2. Overmocking
 - Mock completely replaces business logic
 - Assertions check mock values, not real results
 - Excessive `patch`/`mock` without verifying side effects
 - Mocking Redis when `fakeredis` or real Redis would be more valuable
+- Mocking SQLite database operations instead of using tmp_path file-backed DB
 
 ### 3. Tautological / Useless Tests
 - `assert True`, missing `assert`, or trivial checks
@@ -66,7 +67,7 @@ Use `websearch` to verify current best practices for:
 ### 5. Fragile Tests
 - Break on refactoring without behavior change
 - Depend on test execution order, `sleep`, or shared mutable state
-- Don't use `pytest.mark.asyncio` properly
+- Shared mutable state in fixtures across test functions
 
 ### 6. Poor Business Coverage
 - Ignore negative scenarios and boundary conditions
@@ -85,7 +86,7 @@ Use `websearch` to verify current best practices for:
 - All tests use **pytest** (not `unittest.TestCase`)
 - Fixtures extracted to `conftest.py`
 - Mocking only via `unittest.mock` or `pytest-mock`
-- Async tests use `pytest.mark.asyncio`
+- Use `pytest.raises` for error scenarios
 - Test file naming: `test_*.py`
 - Test function naming: `test_*`
 
@@ -95,72 +96,56 @@ Verify tests exist for all key system parts:
 
 ### Required Coverage Areas
 
-- **Authentication & Authorization**
-  - Login (returns `TokenWithUser` with `display_name`)
-  - Registration request (creates `registration_requests` record)
-  - Token refresh
-  - Password change
-  - Role-based access control (admin/editor/viewer)
-  - Admin bypass for dashboard access
-  - 403/404 dual-signal for dashboard access
+- **Settings / Configuration**
+  - `WrongDataSettings` error raised for missing/invalid settings
+  - Default settings resolution from `app_config.json5`
+  - Settings directory validation (existing dir, nonexistent dir)
+  - Path resolution (paths module, report/output dirs)
 
-- **API Layer** — all public endpoints (success cases + all error cases)
-  - Auth endpoints (login, register-request, refresh, me, change-password)
-  - Dashboard CRUD endpoints
-  - Graph CRUD endpoints
-  - Filter CRUD endpoints
-  - Layout CRUD endpoints
-  - Upload + processing endpoints
-  - Data retrieval endpoints
-  - Admin endpoints (users, registration-requests, logs)
-  - Health endpoints (`/health`, `/health/detailed`, `/`)
+- **Dictionary Processing (dict_service)**
+  - `MappingDict.build_mapping` produces correct `like_data` and `fts_data` frames
+  - Mapping index ordering (highest `mapping_index` wins for REPLACE)
+  - FTS row handling (pipe-separated search columns, pipe-separated terms)
+  - Extra columns passed through correctly
 
-- **Business Logic / Services**
-  - AuthService (login, password verification, JWT creation)
-  - DashboardService (access checks, admin bypass)
-  - DataService (upload pipeline, processing trigger)
-  - Registration approval flow (temp password via `secrets.token_urlsafe(16)`)
-  - Processing log lifecycle (`started` → `uploaded` → `processing` → `success`/`failed`)
+- **CSV Service (csv_service)**
+  - CSV/CSV.gz loading with correct headers and schema
+  - Date column auto-detection (`DATE_REGEX`, `_detect_date_column`)
+  - Merged dictionary creation (dedup, sort by `search_column_idx`)
+  - CSV export roundtrip (BOM, separator, gzip compression, `decimal_comma`)
+  - Empty dictionary directory edge case (graceful error, not `pl.concat([])` crash)
 
-- **Data Processing**
-  - CSV/CSV.gz loading (Polars, not pandas)
-  - Data validation (schema, encoding, MIME-type)
-  - Transformations (per processing_configs)
-  - Aggregations (groupby, YoY, shares, custom metrics)
-  - Custom metrics formula parser (valid and invalid formulas)
-  - JSONB normalization (dims key recursive sorting)
-  - Temp file cleanup (success and failure paths)
+- **Database Service (db_service)**
+  - `DBWorker` table creation with correct indexes
+  - `check_date_column` verdicts (True/False paths)
+  - `_apply_delete` executes exactly once (no double execution)
+  - `_apply_replace` picks highest `mapping_index`
+  - FTS5 trigger sync on INSERT/UPDATE/DELETE
+  - `drop_table` contract (always True with `IF EXISTS`)
 
-- **Repositories / Data Access**
-  - CRUD operations for all entities
-  - Dashboard access queries
-  - JSONB containment queries (GIN index usage)
-  - UPSERT operations on `aggregated_data`
+- **Application Service (app_service)**
+  - End-to-end pipeline: CSV → dictionary merge → database import → export
+  - `generate_rules_blocks` loop handles all action types (f, p, s, d, r)
+  - Error propagation for invalid input (bad CSV, missing dictionary)
+  - Clean row counts (input rows, output rows, null data files)
 
-- **Configuration & Startup**
-  - Multi-source config loading (env, Docker secrets, .env, app.yaml)
-  - Production credential enforcement
-  - CORS origin validation
-  - Startup lifecycle (DB check, migrations, admin user creation, stale file cleanup)
+- **CLI Entry Point (app.py)**
+  - `CliRunner` integration test for full pipeline invocation
+  - Settings-not-initialized error path
+  - Print output contains expected summary information
 
-- **Task Queue**
-  - Task enqueue/status/result/error tracking
-  - Background worker execution
-  - Processing log updates during pipeline execution
-
-- **Pydantic Models**
-  - All request/response models
-  - StrEnum serialization
-  - Custom validators (CORS origins, admin credentials)
-  - `TokenWithUser` model (token + user with `display_name`)
-  - `UserRead` model (computed `display_name` from email prefix)
+- **Packaging & Smoke**
+  - Wheel builds successfully with correct metadata
+  - Package is pip-installable in a fresh venv
+  - `smoke_install.py` passes in a clean environment
+  - Version consistency across `pyproject.toml` and `__init__.py`
 
 ### Special Attention
 - Negative scenario and boundary condition coverage
-- Integration tests with real test database (`bidb_test`)
-- Critical path coverage (upload → process → display)
-- Test database isolation (SAVEPOINT rollback, NullPool)
-- Fixture structure matches `docs/06-backend/testing.md` specification
+- Integration tests with real SQLite (`db_worker` fixture, tmp_path)
+- Critical path coverage (process_data → clean_data export)
+- Test database isolation (each test gets its own tmp SQLite DB)
+- Fixture structure matches `tests/conftest.py` canonical fixtures
 
 
 ## Audit Result Format
@@ -179,11 +164,11 @@ Create file: `.ai/audit/tests/audit_report_<number>.md` (next available number)
 
 | File | Test | Type | Category | Problem | Action | Priority |
 |------|------|------|----------|---------|--------|----------|
-| tests/test_auth.py | test_login_old_response | [TEST-REWRITE] | Contract | Checks only `{access_token}`, not `TokenWithUser` | Rewrite | HIGH |
-| tests/test_processing.py | test_process_uses_pandas | [TEST-DELETE] | Architecture | Imports pandas instead of polars | Delete | HIGH |
-| tests/test_upload.py | test_no_assert | [TEST-DELETE] | Quality | No assert statement | Delete | MEDIUM |
-| tests/test_dashboards.py | — | [BEST-PRACTICE] | Coverage | No tests for 403/404 dual-signal | Add tests | HIGH |
-| tests/test_upload.py | test_upload_cleanup | [DOC-UPDATE] | Contract | Expects old cleanup behavior | Update test + spec | LOW |
+| tests/test_db_service.py | test_drop_tables | [TEST-UPDATE] | Contract | Asserts `result["non_existent"] is True` — IF EXISTS makes this always True | Update test + docstring | LOW |
+| tests/test_csv_service.py | test_uses_pandas | [TEST-DELETE] | Architecture | Imports pandas instead of polars for CSV loading | Delete | HIGH |
+| tests/test_app.py | test_no_assert | [TEST-DELETE] | Quality | No assert statement | Delete | MEDIUM |
+| tests/test_dict_service.py | — | [BEST-PRACTICE] | Coverage | No FTS trigger firing assertions | Add tests | HIGH |
+| tests/test_csv_service.py | test_export_csv | [DOC-UPDATE] | Contract | Expects old cleanup behavior | Update test + spec | LOW |
 
 3. **Coverage Assessment** — which important areas/scenarios are uncovered or weakly covered
 

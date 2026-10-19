@@ -126,7 +126,7 @@ For every planned change, specify:
 
 Output path:
 
-`C:\py_dev\mko_bazuna\.ai\plans`
+`C:\py_exp\mko_data_cleaner\.ai\plans`
 
 ## Step 7. Validate the Implementation Plan
 
@@ -164,7 +164,7 @@ The final plan must:
 
 The refined plan must be written to:
 
-`C:\py_dev\mko_bazuna\.ai\plans`
+`C:\py_exp\mko_data_cleaner\.ai\plans`
 
 ## Orchestrator Responsibilities
 

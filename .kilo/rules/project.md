@@ -30,7 +30,7 @@
    All fixed values and settings must use `Enum` or `StrEnum` instead of dicts and lists. Keep them separately in models. 
 
 11. **Pydantic**  
-    All models and validation use Pydantic v2 (DTO/validation layer at system boundaries: bot input, settings schemas, future API). Django ORM remains the persistence layer for standard CRUD operations. 
+    All models and validation use Pydantic v2 (DTO/validation layer at system boundaries: settings schemas, future API). SQLite remains the persistence layer for data storage.
 
 12. **No `print()` Statements**  
     Use proper logging: `logger = logging.getLogger(__name__)`.

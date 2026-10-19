@@ -7,9 +7,9 @@ alwaysApply: false
 
 # Implementation Audit Workflow
 
-## Step 0 — Ensure Docker Environment is Running
+## Step 0 — Ensure uv Environment is Ready
 
-Start Docker services in **both development and test modes** (never production) before executing any test or verification commands. Follow the setup instructions in `docs/11-guides/docker.md`. Confirm all required containers are in `running` or `healthy` state before proceeding. If the environment cannot be started, document why and skip dependent steps.
+Ensure the local `uv` environment is set up before executing any test or verification commands. Run `uv sync --group dev` to install/sync all dependencies. Confirm the Python interpreter is available (`uv run python --version`) before proceeding. If the environment cannot be started, document why and skip dependent steps.
 
 ## Objective
 

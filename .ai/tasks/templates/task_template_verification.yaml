@@ -21,9 +21,9 @@ verifies:
   - task_YYY_implementation_task
 
 verification_steps:
-  - build: <command to build, e.g. "docker compose build">
-  - test: <test command, e.g. "pytest tests/test_user_creation.py -v">
-  - smoke_check: <minimal check, e.g. "curl /health or lint">
+  - build: <command to build, e.g. "uv build">
+  - test: <test command, e.g. "uv run pytest tests/test_app.py -v">
+  - smoke_check: <minimal check, e.g. "uv run ruff check src/ or scripts/smoke_install.py">
 
 pass_criteria:
   - build succeeds

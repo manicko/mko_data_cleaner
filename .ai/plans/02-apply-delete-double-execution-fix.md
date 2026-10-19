@@ -32,7 +32,7 @@
 - C3. Add exactly one focused regression test (see B1). No unrelated test refactors.
 - C4. Do **not** touch documentation (`docs/`, README) — the Doc-specialist handles
   `docs/00-overview/architecture.md` and `docs/00-overview/open-questions.md` D-10
-  in the Documentation step. (`mko_bazuna/docs/00-overview/doc-maintenance-rules.md`
+   in the Documentation step. (`docs/00-overview/doc-maintenance-rules.md`
   does not exist in this repo; project rule 14 applies.)
 - C5. Do **not** modify `.ai/` plan/audit/problem files.
 - C6. Commit only the files of the current work item, conventional-commit style
