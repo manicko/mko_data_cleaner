@@ -84,11 +84,12 @@ def extra_cols():
 def synthetic_report(tmp_path: Path) -> Path:
     """Create a tiny synthetic report directory for end-to-end tests.
 
-    Mirrors the e2e scenario in scripts/smoke_install.py (lines 112-160)
+    Mirrors the e2e scenario in scripts/smoke_install.py (lines 112-168)
     and tests/test_app.py::test_process_data_end_to_end. When either the
     data or the assertions change, update ALL copies:
       1. scripts/smoke_install.py (maintenance comment)
       2. tests/test_app.py::test_process_data_end_to_end
+      3. tests/test_app.py::test_run_cli_success
     Shared assertions: rows_loaded==3, rows_exported==2,
     export_dir/import_dir/report_dir resolved, export dir exists with
     .gz files, null_data_files is list, duration>0, timings keys.

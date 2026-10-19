@@ -258,7 +258,7 @@ def test_config_to_dict_returns_empty_dict_on_invalid_json5(tmp_path: Path):
 # B4: ReportResult model contract
 # ------------------------------------------------------------------- #
 def test_report_result_model_construction_and_serialization():
-    """ReportResult accepts all 10 fields and serializes via model_dump()."""
+    """ReportResult accepts all 11 fields and serializes via model_dump()."""
     result = ReportResult(
         report_dir=Path("/tmp/report"),
         import_dir=Path("/tmp/report/raw_data"),
