@@ -35,11 +35,20 @@ def test_mapping_build(sample_dictionary, dict_indexes):
     patterns = df[MappingColumns.pattern].to_list()
 
     assert "COCA-COLA" in patterns  # FULL_MATCH → no %
-    assert any(
-        p and p.startswith("%") and p.endswith("%") for p in patterns
-    )  # PARTIAL
+    assert any(p and p.startswith("%") and p.endswith("%") for p in patterns)  # PARTIAL
     assert any(p and p.endswith("%") for p in patterns)  # STARTS_WITH
-    assert df[MappingColumns.column_name].is_in(main_columns).all()
+    # DELETE rule: pattern is generated (term is non-empty)
+    # sample_dictionary search indices in main_columns:
+    #   index 3 → channelName (Coca-Cola, cola_end ENDS_WITH, Спонсор)
+    #   index 1 → researchDate (канал, Первый)
+    #   index 4 → brand (Удалить — out of range search=5 → null column_name)
+    #   index 4 → brand (Удалить DELETE row has match="f")
+    #   FTS row excluded from like_data
+    assert set(df[MappingColumns.column_name].drop_nulls().unique().to_list()) == {
+        "channelName",
+        "researchDate",
+        "brand",
+    }
 
 
 def test_pattern_generation(sample_dictionary, dict_indexes):
@@ -114,9 +123,7 @@ def test_build_search_like_pattern_real_cases(sample_dictionary, dict_indexes):
             [MatchType.PARTIAL_MATCH, MatchType.STARTS_WITH]
         )
     )
-    assert any(
-        "%" in p for p in partial_starts[MappingColumns.pattern].to_list() if p
-    )
+    assert any("%" in p for p in partial_starts[MappingColumns.pattern].to_list() if p)
 
 
 def test_drop_empty_columns():
@@ -163,6 +170,48 @@ def test_like_pattern_partial():
     assert result["pattern"][0] == "%APP%"
 
 
+def test_build_search_like_pattern_ends_with():
+    expr = MappingDict._build_search_like_pattern("match", "term")
+
+    df = pl.DataFrame({"match": [MatchType.ENDS_WITH], "term": ["APPLE"]})
+
+    result = df.with_columns(expr.alias("pattern"))
+
+    assert result["pattern"][0] == "%APPLE"  # leading % only, NO trailing %
+
+
+def test_build_search_like_pattern_starts_with():
+    expr = MappingDict._build_search_like_pattern("match", "term")
+
+    df = pl.DataFrame({"match": [MatchType.STARTS_WITH], "term": ["APPLE"]})
+
+    result = df.with_columns(expr.alias("pattern"))
+
+    assert result["pattern"][0] == "APPLE%"  # trailing % only, NO leading %
+
+
+def test_build_search_like_pattern_contains():
+    expr = MappingDict._build_search_like_pattern("match", "term")
+
+    df = pl.DataFrame(
+        {
+            "match": [
+                MatchType.FULL_MATCH,
+                MatchType.PARTIAL_MATCH,
+                MatchType.STARTS_WITH,
+            ],
+            "term": ["APPLE", "APP", "APPLE"],
+        }
+    )
+
+    result = df.with_columns(expr.alias("pattern"))
+
+    patterns = result["pattern"].to_list()
+    assert patterns[0] == "APPLE"  # FULL: no %
+    assert patterns[1] == "%APP%"  # PARTIAL: both %
+    assert patterns[2] == "APPLE%"  # STARTS_WITH: trailing % only
+
+
 def test_build_query_no_strict_column(sample_dictionary, dict_indexes):
     """like_data must not contain a spurious 'strict' column from with_columns kwargs."""
     mapping = MappingDict(data=sample_dictionary, action_col_indexes=dict_indexes)
@@ -181,11 +230,11 @@ def test_generate_rules_blocks_ordering(dict_indexes):
     """generate_rules_blocks yields DELETE before REPLACE before ADD,
     and REPLACE groups respect group_by_cols output order."""
     data = [
-        ["d", "f", 3, None, "Удалить", None],           # DELETE
-        ["r", "f", 1, None, "Apple", "replace_1"],        # REPLACE group 1 (tag non-null)
-        ["r", "f", 1, None, "Sam", "replace_2"],          # REPLACE group 1 (tag non-null)
-        ["r", "f", 4, None, "Banana", None],              # REPLACE group 2 (tag null → diff keys)
-        ["a", "f", 3, None, "Coca-Cola", "brand"],        # ADD
+        ["d", "f", 3, None, "Удалить", None],  # DELETE
+        ["r", "f", 1, None, "Apple", "replace_1"],  # REPLACE group 1 (tag non-null)
+        ["r", "f", 1, None, "Sam", "replace_2"],  # REPLACE group 1 (tag non-null)
+        ["r", "f", 4, None, "Banana", None],  # REPLACE group 2 (tag null → diff keys)
+        ["a", "f", 3, None, "Coca-Cola", "brand"],  # ADD
     ]
     df = pl.DataFrame(
         data,

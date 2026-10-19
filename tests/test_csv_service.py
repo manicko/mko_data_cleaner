@@ -1,8 +1,11 @@
+import gzip
 import sqlite3
 
 import polars as pl
+import pytest
 
 from mko_data_cleaner.core.csv_service import CSVWorker
+from mko_data_cleaner.core.errors import WrongDataSettings
 
 
 def test_get_files_suffix():
@@ -12,7 +15,9 @@ def test_get_files_suffix():
     assert CSVWorker.get_files_suffix(None) == ".csv"
     # Pre-match branches
     assert CSVWorker.get_files_suffix("infer") == ".csv"  # line 245
-    assert CSVWorker.get_files_suffix({"method": "gzip"}) == ".csv.gz"  # line 247 (dict-form)
+    assert (
+        CSVWorker.get_files_suffix({"method": "gzip"}) == ".csv.gz"
+    )  # line 247 (dict-form)
     # Match cases
     assert CSVWorker.get_files_suffix("xz") == ".csv.xz"  # line 256
     assert CSVWorker.get_files_suffix("zip") == ".csv.zip"  # line 258
@@ -211,7 +216,9 @@ def test_export_sql_to_csv_roundtrip_content(tmp_path):
     assert sorted(merged["name"].to_list()) == ["Alice", "Bob", "Charlie"]
 
     # Cell values are preserved
-    value_map = dict(zip(merged["name"].to_list(), merged["value"].to_list(), strict=True))
+    value_map = dict(
+        zip(merged["name"].to_list(), merged["value"].to_list(), strict=True)
+    )
     assert value_map["Alice"] == "tag1"
     assert value_map["Bob"] == "tag2"
     # None is written as an empty CSV field, which polars parses back as null
@@ -298,3 +305,72 @@ def test_get_merged_dictionary_sorts_multi_digit(tmp_path):
     result = pl.read_csv(merged_path, separator=";")
     search_values = result["search_column_idx"].to_list()
     assert search_values == [1, 2, 11, 22]
+
+
+def test_export_sql_to_csv_gzip(tmp_path):
+    """export_sql_to_csv with gzip compression produces valid .csv.gz files."""
+    con = sqlite3.connect(tmp_path / "test.db")
+    con.execute("CREATE TABLE data_table (id INTEGER, name TEXT, value TEXT)")
+    con.executemany(
+        "INSERT INTO data_table VALUES (?, ?, ?)",
+        [(1, "Alice", "tag1"), (2, "Bob", "tag2"), (3, "Charlie", None)],
+    )
+    con.commit()
+
+    worker = CSVWorker.__new__(CSVWorker)
+    worker.export_settings = {
+        "compression": "gzip",
+        "chunk_size": 1,
+        "separator": ";",
+    }
+
+    output_paths: list = []
+    count = worker.export_sql_to_csv(
+        db_con=con,
+        data_table="data_table",
+        export_path=tmp_path / "export",
+        output_files=output_paths,
+    )
+
+    assert count == 3
+    assert len(output_paths) == 3
+
+    # Verify gzip-specific format: .csv.gz extension AND valid gzip binary
+    for f in output_paths:
+        assert str(f).endswith(".csv.gz")
+        with gzip.open(f, "rt", encoding="utf-8") as gz:
+            content = gz.read()
+            assert len(content) > 0
+
+    # Verify content round-trip (null handling preserved)
+    dfs = [pl.read_csv(f, separator=";") for f in output_paths]
+    merged = pl.concat(dfs)
+    assert merged.height == 3
+    assert merged.columns == ["id", "name", "value"]
+    value_map = dict(
+        zip(merged["name"].to_list(), merged["value"].to_list(), strict=True)
+    )
+    assert value_map["Alice"] == "tag1"
+    assert value_map["Bob"] == "tag2"
+    assert value_map["Charlie"] is None
+    con.close()
+
+
+def test_import_csv_no_delimiter_raises(tmp_path):
+    """CSVWorker raises WrongDataSettings when no files with the specified extension are found."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    # Create a file with wrong extension — triggers "No files found" path
+    (data_dir / "not_csv.txt").write_text("id,name\n1,Alice\n")
+
+    data_settings = {"extension": "gz"}  # looking for .gz files
+    with pytest.raises(WrongDataSettings, match="No files with extension"):
+        CSVWorker(
+            data_path=data_dir,
+            data_settings=data_settings,
+            reader_settings={},
+            dict_path=tmp_path / "dict.csv",
+            dict_settings={},
+            export_path=tmp_path / "export",
+            export_settings={},
+        )

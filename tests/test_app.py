@@ -5,8 +5,9 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import polars as pl
 import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
@@ -14,7 +15,7 @@ from typer.testing import CliRunner
 from mko_data_cleaner.app import app, initialize_settings, process_data
 from mko_data_cleaner.core.app_service import get_app_service
 from mko_data_cleaner.core.errors import SettingsNotInitializedError
-from mko_data_cleaner.core.models import ReportResult
+from mko_data_cleaner.core.models import DataFileExtension, ReportResult
 from mko_data_cleaner.core.paths import APP_DIR, APP_NAME, AppPaths
 from mko_data_cleaner.core.utils import config_to_dict
 from mko_data_cleaner.notebook import check_notebook_environment
@@ -170,7 +171,9 @@ def test_run_cli_without_settings_raises_settings_error(
         app,
         ["run", str(empty_report_dir), "--settings-dir", str(empty_settings_dir)],
     )
+    assert result.exit_code == 1
     assert isinstance(result.exception, SettingsNotInitializedError)
+    assert "settings" in str(result.exception).lower()
 
 
 # --------------------------------------------------------------------------- #
@@ -189,9 +192,7 @@ def test_list_settings_lists_when_dir_exists(populated_settings: Path):
 def test_list_settings_does_not_raise_when_dir_missing(tmp_path: Path):
     runner = CliRunner()
     missing_dir = tmp_path / "missing"
-    result = runner.invoke(
-        app, ["list-settings", "--settings-dir", str(missing_dir)]
-    )
+    result = runner.invoke(app, ["list-settings", "--settings-dir", str(missing_dir)])
     assert result.exit_code == 0
     assert result.exception is None
 
@@ -217,22 +218,25 @@ def test_init_cli_creates_settings_in_tmp_dir(tmp_path: Path, monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_get_app_service_constructs_after_initialization(populated_settings: Path):
     service = get_app_service(settings_dir=populated_settings)
-    assert service.app_config is not None
-    assert service.log_config is not None
-    assert service.app_config.data_paths.import_folder is not None
+    # Verify config parsed from shipped template, not just non-None
+    assert service.app_config.data_file_settings.index_column == "AdId"
+    assert service.app_config.database_settings.table_name == "data_table"
+    assert service.app_config.data_file_settings.extension == DataFileExtension.gz
+    assert service.log_config.version == 1
+    assert service.app_config.data_paths.import_folder == Path("raw_data")
+    assert service.app_config.data_paths.export_folder == Path("clean_data")
 
 
 def test_process_data_past_gate_does_not_raise_settings_error(
-    populated_settings: Path, empty_report_dir: Path
+    populated_settings: Path, synthetic_report: Path
 ):
-    try:
-        process_data(empty_report_dir, settings_dir=populated_settings)
-    except SettingsNotInitializedError:
-        pytest.fail("process_data raised SettingsNotInitializedError despite settings present")
-    except Exception:
-        # Operational errors from the empty report dir are acceptable here;
-        # we only assert the settings gate is not the source of failure.
-        pass
+    """Verify process_data passes the settings gate and completes with valid data."""
+    result = process_data(synthetic_report, settings_dir=populated_settings)
+    assert isinstance(result, ReportResult)
+    assert result.rows_loaded >= 0
+    assert result.rows_exported >= 0
+    assert result.duration > 0.0
+    assert set(result.timings.keys()) == {"import", "mapping", "export"}
 
 
 # --------------------------------------------------------------------------- #
@@ -299,7 +303,8 @@ def test_process_data_returns_report_result(
         rows_loaded=42,
         rows_exported=40,
     )
-    fake_service = SimpleNamespace(run_report=lambda path: fake_result)
+    fake_service = MagicMock()
+    fake_service.run_report.return_value = fake_result
     monkeypatch.setattr(
         "mko_data_cleaner.app.get_app_service",
         lambda settings_dir=None: fake_service,
@@ -308,7 +313,7 @@ def test_process_data_returns_report_result(
     assert isinstance(result, ReportResult)
     assert result.rows_loaded == 42
     assert result.rows_exported == 40
-    assert result.report_dir == empty_report_dir
+    fake_service.run_report.assert_called_once_with(empty_report_dir)
 
 
 # ------------------------------------------------------------------- #
@@ -400,6 +405,30 @@ def test_process_data_end_to_end(populated_settings: Path, synthetic_report: Pat
     assert result.duration > 0.0
     assert set(result.timings.keys()) == {"import", "mapping", "export"}
     assert all(v >= 0.0 for v in result.timings.values())
+
+    # ── Verify DELETE and ADD rules by inspecting exported CSV content ──
+    export_files = sorted(result.export_dir.glob("*.csv.gz"))
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+
+    # Collect all string cell values
+    all_cells = []
+    for col in merged.columns:
+        for val in merged[col].to_list():
+            if val is not None:
+                all_cells.append(str(val))
+
+    # DELETE rule: Brand2 must be absent from all cells
+    assert "Brand2" not in all_cells
+
+    # Brand1 must be present (2 surviving rows)
+    assert all_cells.count("Brand1") == 2
+
+    # ADD rule: tag column populated with "added_by_brand" value for Brand1 rows
+    assert "tag" in merged.columns
+    tag_values = merged["tag"].drop_nulls().to_list()
+    assert len(tag_values) > 0
+    assert "added_by_brand" in tag_values
 
 
 # ------------------------------------------------------------------- #
