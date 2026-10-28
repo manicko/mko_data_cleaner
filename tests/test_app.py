@@ -307,7 +307,7 @@ def test_process_data_returns_report_result(
     fake_service.run_report.return_value = fake_result
     monkeypatch.setattr(
         "mko_data_cleaner.app.get_app_service",
-        lambda settings_dir=None: fake_service,
+        lambda settings_dir=None, dict_path=None: fake_service,
     )
     result = process_data(empty_report_dir, settings_dir=populated_settings)
     assert isinstance(result, ReportResult)
@@ -508,3 +508,143 @@ def test_run_cli_separator_mismatch(
     assert "Ошибка" in result.output
     assert "merged_dictionary.csv" in result.output
     assert "separator" in result.output
+
+
+# ------------------------------------------------------------------- #
+# B5: dict_path override feature
+# ------------------------------------------------------------------- #
+def test_process_data_with_dict_path_override(
+    populated_settings: Path,
+    synthetic_report: Path,
+    external_dict_file: Path,
+):
+    """An external abs dict_path is read and applied (Brand2 deleted, Brand1 tagged)."""
+    result = process_data(
+        synthetic_report,
+        settings_dir=populated_settings,
+        dict_path=external_dict_file,
+    )
+    assert isinstance(result, ReportResult)
+    assert result.rows_loaded == 3
+    assert result.rows_exported == 2  # Brand2 deleted
+
+    export_files = sorted(result.export_dir.glob("*.csv.gz"))
+    assert export_files
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+
+    all_cells = [
+        str(v)
+        for col in merged.columns
+        for v in merged[col].to_list()
+        if v is not None
+    ]
+    assert "Brand2" not in all_cells
+    assert all_cells.count("Brand1") == 2
+    assert "added_by_brand" in merged["tag"].drop_nulls().to_list()
+
+
+def test_process_data_without_dict_path_uses_default(
+    populated_settings: Path,
+    synthetic_report: Path,
+):
+    """Without dict_path the config default <report_dir>/dict/merged_dictionary.csv is used."""
+    # Direct property-level guard: no override → default path resolution.
+    service = get_app_service(settings_dir=populated_settings)
+    assert service._dict_path is None
+    service.base_path = synthetic_report
+    default_dict = synthetic_report / "dict" / "merged_dictionary.csv"
+    assert service.dict_path == default_dict
+    assert service.dict_path.is_file()
+
+    # End-to-end behavior is unchanged by the feature.
+    result = process_data(synthetic_report, settings_dir=populated_settings)
+    assert result.rows_loaded == 3
+    assert result.rows_exported == 2
+
+
+def test_process_data_dict_path_missing_raises_filenotfound(
+    populated_settings: Path,
+    empty_report_dir: Path,
+):
+    """A non-existent override dict_path raises FileNotFoundError with the resolved path."""
+    missing = empty_report_dir / "does_not_exist.csv"
+    with pytest.raises(FileNotFoundError) as exc_info:
+        process_data(
+            empty_report_dir,
+            settings_dir=populated_settings,
+            dict_path=missing,
+        )
+    msg = str(exc_info.value)
+    assert "Dictionary file not found" in msg
+    assert str(missing) in msg
+    assert str(missing.resolve()) in msg
+
+
+def test_run_cli_with_dict_path(
+    populated_settings: Path,
+    synthetic_report: Path,
+    external_dict_file: Path,
+):
+    """CLI run with --dict-path points to the external dictionary file."""
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            str(synthetic_report),
+            "--settings-dir",
+            str(populated_settings),
+            "--dict-path",
+            str(external_dict_file),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Report complete" in result.output
+    assert "3 loaded → 2 clean" in result.output
+
+
+def test_dict_path_relative_resolves_against_report_dir(
+    populated_settings: Path,
+    synthetic_report: Path,
+):
+    """A relative dict_path resolves against the report directory (Q1) and is applied."""
+    # Place a custom dictionary in the report root with rules that differ from
+    # the default (DELETE Brand1, add tag to Brand2) so a fallback to the
+    # report-dir default dict would produce different output.
+    custom = synthetic_report / "custom_dict.csv"
+    custom.write_text(
+        "action;match;search;value;term;tag\n"
+        "d;f;4;NULL;Brand1;\n"
+        "a;f;4;NULL;Brand2;kept_by_brand\n",
+        encoding="utf-8",
+    )
+
+    # Property-level check: relative path resolves against base_path (report dir).
+    service = get_app_service(settings_dir=populated_settings, dict_path="custom_dict.csv")
+    service.base_path = synthetic_report
+    assert service.dict_path == custom
+    assert service.dict_path.is_file()
+
+    # End-to-end: the override (not the default) dict is applied.
+    result = process_data(
+        synthetic_report,
+        settings_dir=populated_settings,
+        dict_path="custom_dict.csv",
+    )
+    assert result.rows_loaded == 3
+    assert result.rows_exported == 1  # both Brand1 rows deleted by override dict
+
+    export_files = sorted(result.export_dir.glob("*.csv.gz"))
+    assert export_files
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+    all_cells = [
+        str(v)
+        for col in merged.columns
+        for v in merged[col].to_list()
+        if v is not None
+    ]
+    assert "Brand1" not in all_cells  # deleted by the override dictionary
+    assert all_cells.count("Brand2") == 1
+    assert "kept_by_brand" in merged["tag"].drop_nulls().to_list()

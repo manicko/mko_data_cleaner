@@ -67,6 +67,17 @@ def run(
             help="User settings directory (default: system config dir)",
         ),
     ] = None,
+    dict_path: Annotated[
+        Path | None,
+        typer.Option(
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+            help="Override the dictionary file path (default: "
+            "<report_dir>/dict/merged_dictionary.csv). "
+            "Relative paths resolve against the report directory.",
+        ),
+    ] = None,
 ):
     """Запустить выгрузку отчёта"""
     if verbose:
@@ -74,7 +85,7 @@ def run(
 
     # The service is created via the factory; SettingsNotInitializedError is
     # propagated when user settings are not initialized.
-    service = get_app_service(settings_dir)
+    service = get_app_service(settings_dir, dict_path=dict_path)
 
     try:
         result = service.run_report(report)
@@ -124,7 +135,9 @@ def list_settings(
 
 # Public API
 def process_data(
-    report_path: str | Path, settings_dir: Path | None = None
+    report_path: str | Path,
+    settings_dir: Path | None = None,
+    dict_path: Path | None = None,
 ) -> ReportResult:
     """
     Run the data-cleaning report for the given directory.
@@ -135,6 +148,11 @@ def process_data(
     ``log_config.json5`` are missing, :class:`SettingsNotInitializedError`
     (a subclass of ``FileNotFoundError``) is raised.
 
+    ``dict_path`` optionally overrides the dictionary file used for cleaning.
+    A relative path resolves against the report directory; an absolute path is
+    used as-is. When ``None`` (the default) the config-driven
+    ``<report_dir>/dict/merged_dictionary.csv`` is used.
+
     Returns:
         :class:`~mko_data_cleaner.core.models.ReportResult` with output
         paths, timings, and row counts.
@@ -142,7 +160,7 @@ def process_data(
     path = Path(report_path)
     if not path.is_dir():
         raise FileNotFoundError(f"Directory not found: {path}")
-    return get_app_service(settings_dir).run_report(path)
+    return get_app_service(settings_dir, dict_path=dict_path).run_report(path)
 
 
 def initialize_settings(force: bool = False, settings_dir: Path | None = None) -> Path:

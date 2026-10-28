@@ -33,11 +33,17 @@ logger = logging.getLogger("app_service")
 
 
 class AppService:
-    def __init__(self, app_paths: AppPaths, resolver: PathResolver):
+    def __init__(
+        self,
+        app_paths: AppPaths,
+        resolver: PathResolver,
+        dict_path: Path | None = None,
+    ):
         self.app_paths = app_paths
         self.resolver = resolver
         self.prepare_log_paths()
         self._base_path = None
+        self._dict_path = dict_path
 
     @cached_property
     def log_config(self) -> LoggingSettings:
@@ -73,6 +79,8 @@ class AppService:
 
     @property
     def dict_path(self) -> Path:
+        if self._dict_path is not None:
+            return Path(self.base_path, self._dict_path)
         return Path(self.base_path, self.app_config.data_paths.dict_file)
 
     @property
@@ -115,6 +123,15 @@ class AppService:
             flush=True,
         )
         self.base_path = data_path
+        if self._dict_path is not None and not self.dict_path.is_file():
+            raise FileNotFoundError(
+                f"Dictionary file not found.\n"
+                f"  Override path: {self._dict_path}\n"
+                f"  Resolved path: {self.dict_path}\n"
+                f"  Searched at: {self.dict_path.resolve()}\n"
+                f"Remove --dict-path / dict_path parameter to use the default "
+                f"(<report_dir>/{self.app_config.data_paths.dict_file})."
+            )
         self.resolver.ensure_file_parent(self.db_path)
         self.resolver.ensure_dir(self.export_path)
 
@@ -326,7 +343,9 @@ def _require_settings(app_paths: AppPaths) -> None:
         )
 
 
-def get_app_service(settings_dir: Path | None = None) -> AppService:
+def get_app_service(
+    settings_dir: Path | None = None, dict_path: Path | None = None
+) -> AppService:
     """Lazily construct :class:`AppService`, validating settings first.
 
     This replaces the former module-level singleton so that
@@ -337,7 +356,11 @@ def get_app_service(settings_dir: Path | None = None) -> AppService:
     """
     app_paths = build_app_paths(settings_dir)
     _require_settings(app_paths)
-    service = AppService(app_paths=app_paths, resolver=PathResolver(app_paths.user_dir))
+    service = AppService(
+        app_paths=app_paths,
+        resolver=PathResolver(app_paths.user_dir),
+        dict_path=dict_path,
+    )
     logging.config.dictConfig(service.log_config.model_dump())
     return service
 

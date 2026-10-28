@@ -158,3 +158,23 @@ def separator_mismatch_report(tmp_path: Path) -> Path:
         f.write("\n".join(dict_lines) + "\n")
 
     return report_dir
+
+
+@pytest.fixture
+def external_dict_file(tmp_path: Path) -> Path:
+    """A ``merged_dictionary.csv`` placed outside the report directory.
+
+    Mirrors the ``synthetic_report`` dictionary (DELETE Brand2, ADD
+    ``added_by_brand`` to Brand1) so tests can verify an override path pointing
+    outside the report dir is honored rather than falling back to the default
+    ``<report_dir>/dict/merged_dictionary.csv``.
+    """
+    file_path = tmp_path / "external_dict" / "merged_dictionary.csv"
+    file_path.parent.mkdir(parents=True)
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    file_path.write_text("\n".join(dict_lines) + "\n", encoding="utf-8")
+    return file_path
