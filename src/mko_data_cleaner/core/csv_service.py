@@ -8,7 +8,7 @@ from time import strftime
 
 import polars as pl
 
-from mko_data_cleaner.core.errors import WrongDataSettings
+from mko_data_cleaner.core.errors import DictionaryStructureError, WrongDataSettings
 from mko_data_cleaner.core.utils import list_files_in_directory, progress_bar
 
 logger = logging.getLogger(__name__)
@@ -203,7 +203,32 @@ class CSVWorker:
     def get_dictionary(self) -> pl.DataFrame:
         if not self.dict_path.is_file():
             self.get_merged_dictionary()
-        return pl.read_csv(self.dict_path, **self.reader_settings)
+        df = pl.read_csv(self.dict_path, **self.reader_settings)
+        self._validate_dictionary_columns(df)
+        return df
+
+    def _validate_dictionary_columns(self, df: pl.DataFrame) -> None:
+        """Validate that the dictionary DataFrame has enough columns for col_indexes."""
+        col_indexes = self.dict_settings.get("col_indexes")
+        if not col_indexes:
+            return
+        max_idx = max(col_indexes.values())
+        if df.width <= max_idx:
+            hint = None
+            if df.width == 1:
+                configured_sep = self.reader_settings.get("separator", "None")
+                hint = (
+                    f"The dictionary was read as a single column — the CSV separator "
+                    f"in 'read_settings.from_csv.separator' ('{configured_sep}') may "
+                    f"not match the dictionary file's actual separator."
+                )
+            raise DictionaryStructureError(
+                file_path=self.dict_path,
+                expected_min_columns=max_idx + 1,
+                actual_columns=df.columns,
+                hint=hint,
+                step="reading dictionary",
+            )
 
     def get_merged_dictionary(self):
         try:

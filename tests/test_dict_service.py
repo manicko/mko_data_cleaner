@@ -1,6 +1,8 @@
 import polars as pl
+import pytest
 
 from mko_data_cleaner.core.dict_service import MappingDict
+from mko_data_cleaner.core.errors import DictionaryStructureError
 from mko_data_cleaner.core.models import MappingColumns, MatchType
 
 
@@ -275,3 +277,41 @@ def test_build_match_query_format(sample_dictionary, dict_indexes):
     assert result == 'adId:"(Apple)" researchDate:"(Company)"'
     assert "adId" in mapping_dict.search_columns
     assert "researchDate" in mapping_dict.search_columns
+
+
+def test_mapping_dict_structure_error_one_column(dict_indexes, tmp_path):
+    """MappingDict with a 1-column DataFrame raises DictionaryStructureError (not IndexError)
+    and the message contains the dict_path and a separator hint."""
+    one_col = pl.DataFrame({"col": ["a", "b"]})
+    dict_path = tmp_path / "dict" / "merged_dictionary.csv"
+    dict_path.parent.mkdir(parents=True)
+    dict_path.write_text("action,match,search,term,tag\n", encoding="utf-8")
+
+    with pytest.raises(DictionaryStructureError) as exc_info:
+        MappingDict(data=one_col, action_col_indexes=dict_indexes, dict_path=dict_path)
+
+    msg = str(exc_info.value)
+    assert "merged_dictionary.csv" in msg
+    assert "separator" in msg
+    assert "building mapping rules" in msg
+    assert exc_info.value.expected_min_columns == 5  # max_idx + 1 = 4 + 1
+
+
+def test_build_match_query_out_of_range_raises(dict_indexes, sample_dictionary):
+    """build_match_query with an out-of-range col_idx raises DictionaryStructureError."""
+    mapping_dict = MappingDict(data=sample_dictionary, action_col_indexes=dict_indexes)
+    mapping_dict.build_mapping(
+        "adId",
+        "researchDate",
+        "programName",
+        "channelName",
+        "brand",
+        extra_col_names=["tag"],
+    )
+    # columns_list has 5 entries (indices 0–4); index 10 is out of range
+    with pytest.raises(DictionaryStructureError) as exc_info:
+        mapping_dict.build_match_query([10], ["value"])
+
+    msg = str(exc_info.value)
+    assert "building match query" in msg
+    assert "data table only has 5 columns" in msg

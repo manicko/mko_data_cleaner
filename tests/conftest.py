@@ -125,3 +125,36 @@ def synthetic_report(tmp_path: Path) -> Path:
         f.write("\n".join(dict_lines) + "\n")
 
     return report_dir
+
+
+@pytest.fixture
+def separator_mismatch_report(tmp_path: Path) -> Path:
+    """Report dir whose merged_dictionary.csv uses ',' while config expects ';'.
+
+    Polars reads the comma-separated file with the ';' config as a single
+    column, exposing the separator-mismatch scenario.
+    """
+    report_dir = tmp_path / "report"
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    # Dictionary uses comma separator — config expects ';' → single-column read
+    dict_lines = [
+        "action,match,search_column_idx,value,term,tag",
+        "d,f,4,NULL,Brand2,",
+        "a,f,4,NULL,Brand1,added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir

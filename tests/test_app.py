@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from mko_data_cleaner.app import app, initialize_settings, process_data
 from mko_data_cleaner.core.app_service import get_app_service
-from mko_data_cleaner.core.errors import SettingsNotInitializedError
+from mko_data_cleaner.core.errors import DictionaryStructureError, SettingsNotInitializedError
 from mko_data_cleaner.core.models import DataFileExtension, ReportResult
 from mko_data_cleaner.core.paths import APP_DIR, APP_NAME, AppPaths
 from mko_data_cleaner.core.utils import config_to_dict
@@ -476,3 +476,35 @@ def test_report_result_rejects_negative_row_counts():
         ReportResult(rows_loaded=-1, rows_exported=95, **common)
     with pytest.raises(ValidationError):
         ReportResult(rows_loaded=100, rows_exported=-5, **common)
+
+
+# ------------------------------------------------------------------- #
+# B1: separator mismatch raises DictionaryStructureError (integration)
+# ------------------------------------------------------------------- #
+def test_process_data_separator_mismatch_raises(
+    separator_mismatch_report: Path, populated_settings: Path
+):
+    """process_data on a comma-separated-dict report raises DictionaryStructureError
+    mentioning the merged dictionary file and a separator hint."""
+    with pytest.raises(DictionaryStructureError) as exc_info:
+        process_data(separator_mismatch_report, settings_dir=populated_settings)
+
+    msg = str(exc_info.value)
+    assert "merged_dictionary.csv" in msg
+    assert "separator" in msg
+    assert "reading dictionary" in msg
+
+
+def test_run_cli_separator_mismatch(
+    separator_mismatch_report: Path, populated_settings: Path
+):
+    """CLI run on a separator-mismatch report exits 1 and prints the error."""
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["run", str(separator_mismatch_report), "--settings-dir", str(populated_settings)],
+    )
+    assert result.exit_code == 1
+    assert "Ошибка" in result.output
+    assert "merged_dictionary.csv" in result.output
+    assert "separator" in result.output

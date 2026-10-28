@@ -136,7 +136,9 @@ class AppService:
         # reading mapping params
         df = csv_worker.get_dictionary()
         mapping_dict = MappingDict(
-            data=df, action_col_indexes=self.app_config.dict_file_settings.col_indexes
+            data=df,
+            action_col_indexes=self.app_config.dict_file_settings.col_indexes,
+            dict_path=self.dict_path,
         )
 
         # DB settings

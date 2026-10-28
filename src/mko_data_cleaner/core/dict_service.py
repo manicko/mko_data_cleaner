@@ -1,8 +1,10 @@
 import logging
 from collections.abc import Generator
+from pathlib import Path
 
 import polars as pl
 
+from mko_data_cleaner.core.errors import DictionaryStructureError
 from mko_data_cleaner.core.models import (
     ActionType,
     DictColumnsIndexes,
@@ -14,8 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class MappingDict:
-    def __init__(self, data: pl.DataFrame, action_col_indexes: DictColumnsIndexes):
+    def __init__(
+        self,
+        data: pl.DataFrame,
+        action_col_indexes: DictColumnsIndexes,
+        dict_path: Path | None = None,
+    ):
         self.data = data
+        self._dict_path = dict_path
 
         self._table_columns: list[str] = []
         self.data_col_index: dict[str, list[str]] = {}
@@ -98,6 +106,24 @@ class MappingDict:
         # extract extra columns going after the max action column
         action_names = list(self.action_col_indexes.keys())
         action_idx = list(self.action_col_indexes.values())
+
+        # Validate that the DataFrame has enough columns for the configured indexes
+        max_idx = max(action_idx)
+        if self.data.width <= max_idx:
+            hint = None
+            if self.data.width == 1:
+                hint = (
+                    "The dictionary was read as a single column — the CSV separator "
+                    "in 'read_settings.from_csv.separator' may not match the "
+                    "dictionary file's actual separator."
+                )
+            raise DictionaryStructureError(
+                file_path=self._dict_path,
+                expected_min_columns=max_idx + 1,
+                actual_columns=self.data.columns,
+                hint=hint,
+                step="building mapping rules",
+            )
 
         # all cols after max action index are used as data mapping columns - extra cols
         data_start_idx = max(action_idx) + 1
@@ -266,6 +292,19 @@ class MappingDict:
 
         columns_list: list[str] = self.data_col_index[MappingColumns.column_name]
         for col_idx, value in zip(indexes, filters, strict=True):
+            if col_idx < 0 or col_idx >= len(columns_list):
+                raise DictionaryStructureError(
+                    file_path=self._dict_path,
+                    expected_min_columns=col_idx + 1,
+                    actual_columns=columns_list,
+                    hint=(
+                        f"Dictionary references data column index {col_idx} but the "
+                        f"data table only has {len(columns_list)} columns. Check that "
+                        "the 'search' values in the dictionary match your data file's "
+                        "column layout."
+                    ),
+                    step="building match query",
+                )
             col_name = columns_list[col_idx]
             self.search_columns.add(col_name)
             # base protection

@@ -5,7 +5,7 @@ import polars as pl
 import pytest
 
 from mko_data_cleaner.core.csv_service import CSVWorker
-from mko_data_cleaner.core.errors import WrongDataSettings
+from mko_data_cleaner.core.errors import DictionaryStructureError, WrongDataSettings
 
 
 def test_get_files_suffix():
@@ -374,3 +374,32 @@ def test_import_csv_no_delimiter_raises(tmp_path):
             export_path=tmp_path / "export",
             export_settings={},
         )
+
+
+def test_get_dictionary_separator_mismatch_raises(tmp_path):
+    """get_dictionary raises DictionaryStructureError when the dictionary CSV
+    uses a separator that doesn't match the config (Polars reads it as 1 column).
+    """
+    dict_path = tmp_path / "dict" / "merged_dictionary.csv"
+    dict_path.parent.mkdir(parents=True)
+    # Comma-separated dictionary while config expects ';'
+    dict_path.write_text(
+        "action,match,search_column_idx,value,term,tag\n"
+        "d,f,4,NULL,Brand2,\n",
+        encoding="utf-8",
+    )
+
+    worker = CSVWorker.__new__(CSVWorker)
+    worker.dict_path = dict_path
+    worker.reader_settings = {"separator": ";", "has_header": True}
+    worker.dict_settings = {
+        "col_indexes": {"action": 0, "match": 1, "search": 2, "term": 4}
+    }
+
+    with pytest.raises(DictionaryStructureError) as exc_info:
+        worker.get_dictionary()
+
+    msg = str(exc_info.value)
+    assert "merged_dictionary.csv" in msg
+    assert "separator" in msg
+    assert "reading dictionary" in msg
