@@ -154,17 +154,22 @@ Performance pragmas are tuned for bulk processing
 
 ## Public Interfaces vs. Internal Details
 
-- **Public, documented:** `process_data(report_path, settings_dir=None)` and
+- **Public, documented:** `process_data(report_path, settings_dir=None, dict_path=None)` and
   `initialize_settings(force=False, settings_dir=None)`
-  ([app.py](../../src/mko_data_cleaner/app.py)), plus the CLI commands.
+  ([app.py](../../src/mko_data_cleaner/app.py)), plus the CLI commands. The `run`
+  CLI flag `--dict-path FILE` and the `dict_path=` argument to `process_data`
+  override the dictionary file (relative paths resolve against the report
+  directory — see [current-behavior.md](current-behavior.md)).
 - **Not part of the contract:** everything under `mko_data_cleaner.core.*`.
   The README still shows the old `core.app_service.app_service` import, which
   no longer exists (the singleton was replaced by the `get_app_service`
   factory) — documented as discrepancy D-3 in
   [open-questions.md](open-questions.md).
-- `src/mko_data_cleaner/__init__.py` is currently **empty**, so
-  `from mko_data_cleaner import process_data` fails; top-level re-exports are
-  owner-confirmed target work (R4) [code-verified].
+- `src/mko_data_cleaner/__init__.py` re-exports `process_data`,
+  `initialize_settings`, `ReportResult`, `SettingsNotInitializedError`,
+  `__version__` and `check_notebook_environment`, so
+  `from mko_data_cleaner import process_data` works directly. The
+  "empty `__init__.py`" gap (R4) is resolved [code-verified].
 
 ## Configuration and External Dependencies
 
@@ -199,13 +204,16 @@ sequenceDiagram
     participant C as CSVWorker
     participant M as MappingDict
     participant D as DBWorker
-    U->>A: process_data(report_dir, settings_dir?)
+    U->>A: process_data(report_dir, settings_dir?, dict_path?)
     A->>A: path.is_dir() else FileNotFoundError
-    A->>F: get_app_service(settings_dir)
+    A->>F: get_app_service(settings_dir, dict_path)
     F->>F: settings present? no -> SettingsNotInitializedError
-    F->>S: construct + dictConfig
+    F->>S: AppService.__init__(dict_path)
+    F->>F: dictConfig
     A->>S: run_report(report_dir)
-    S->>C: get_dictionary() (merge if missing)
+    S->>S: dict_path set + exists? else FileNotFoundError (override / resolved / absolute)
+    S->>S: dict_path property: relative resolves to base_path (report dir); absolute used as-is
+    S->>C: get_dictionary() (uses dict_path override or default)
     C-->>S: raw rules DataFrame
     S->>M: build_mapping (LIKE + FTS rules)
     S->>D: create schema, import chunks, index
@@ -216,12 +224,15 @@ sequenceDiagram
     S->>D: sync_with_data_table
     S->>C: export clean_data
     D-->>S: close(): checkpoint, delete DB file
-    S-->>U: returns None (result object: target work)
+    S-->>U: returns ReportResult
 ```
 
 Error path: if settings are missing the sequence stops at the factory with
 `SettingsNotInitializedError` before any file is touched; the CLI renders it
-as `❌ Ошибка: …` and exits with code 1.
+as `❌ Ошибка: …` and exits with code 1. If `--dict-path`/`dict_path` points to
+a missing file, `run_report` raises `FileNotFoundError` (naming the override,
+resolved, and absolute paths) after `base_path` is resolved, before any
+dictionary processing.
 
 ## Error Handling and Significant Side Effects
 
@@ -247,7 +258,7 @@ as `❌ Ошибка: …` and exits with code 1.
 | 2 | ADD writes the merged tag list into the extra column instead of merging with a value previously written by REPLACE | Owner-confirmed intent (D13): REPLACE-then-ADD → `1 2` (merged); current implementation yields `2` (only ADD tags). ADD-on-ADD merging works as documented | **Confirmed gap (D-2)**, not fixed |
 | 3 | `synchronous=OFF` + disposable DB | Fast, but a crash mid-run loses the in-progress DB (acceptable by design) | Accepted trade-off |
 | 4 | Dictionary schema is positional (`col_indexes`); with the shipped config the term sits at index 4 and column 3 is unused | Users must align their dictionary with the config (README now documents the `term: 3` alternative) | Resolved in docs (D12) |
-| 5 | `rich` imported but undeclared; license metadata (MIT classifier) contradicts the BSD-3-Clause LICENSE; no `__version__`; empty top-level `__init__.py` | Publishing/install risk | Owner-confirmed target fixes (D4, R9), detailed in open-questions D-8 |
+| 5 | `rich` imported but undeclared; license metadata (MIT classifier) contradicts the BSD-3-Clause LICENSE | Publishing/install risk | Owner-confirmed target fixes (D4, R9), detailed in open-questions D-8 |
 | 6 | No CI, no git tags, no example notebook yet | Reproducibility depends on the developer machine | Owner-confirmed target work (D9–D11) |
 | 7 | README documents the removed `core.app_service.app_service` singleton | Users following the README hit an `ImportError` | **Resolved** — README section removed (D-3) |
 | 8 | Duplicate execution of the DELETE statement in `_apply_delete` | Harmless (second pass matches nothing) but wasteful | **Fixed** in commit `4af9813` — `_apply_delete` now executes the DELETE exactly once (the duplicate `self.perform_query(sql)` call was removed; the `logger.debug` line was retained); a regression test `test_apply_delete_executes_delete_once` was added. Full description in [`01-apply-delete-double-execution.md`](../../.ai/audit/problems/01-apply-delete-double-execution.md) |

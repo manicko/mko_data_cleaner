@@ -76,10 +76,18 @@ settings_dir = initialize_settings()  # initialize_settings(settings_dir=Path(..
 
 # 2. Запустить обработку. process_data() возвращает ReportResult.
 result = process_data(r"data\mvideo", settings_dir=settings_dir)
+#    dict_path=Path(...) — опционально переопределяет путь к словарю правил
+#    (по умолчанию <report_dir>/dict/merged_dictionary.csv).
 ```
 
 Параметр `settings_dir` (опциональный) есть и у `initialize_settings()`, и у
 `process_data()`; по умолчанию — системный каталог `platformdirs`.
+
+Параметр `dict_path` (опциональный) переопределяет путь к файлу словаря правил.
+По умолчанию используется `<report_dir>/dict/merged_dictionary.csv` (из
+`app_config.json5`). **Относительный** путь разрешается относительно директории
+отчёта, **абсолютный** — используется как есть. Если файл не найден, выбрасывается
+`FileNotFoundError` (см. опцию `--dict-path` в разделе CLI ниже).
 
 `process_data()` возвращает объект `ReportResult` со следующими полями:
 
@@ -115,12 +123,24 @@ mko-data-cleaner list-settings
 mko-data-cleaner init --settings-dir C:\my\settings
 mko-data-cleaner run --settings-dir C:\my\settings path/to/your_report_folder
 mko-data-cleaner list-settings --settings-dir C:\my\settings
+
+# переопределение пути к словарю правил (по умолчанию <report_dir>/dict/merged_dictionary.csv)
+mko-data-cleaner run --dict-path dict/merged_dictionary.csv path/to/your_report_folder
 ```
 
 Опция `--settings-dir DIRECTORY` есть у команд `init`, `run` и `list-settings`.
 Она переопределяет каталог пользовательских настроек: по умолчанию используется
 системный каталог `platformdirs` (внутри него создаётся `settings/` с
 `app_config.json5` и `log_config.json5`).
+
+Опция `--dict-path FILE` есть у команды `run`. Она заменяет путь к файлу словаря
+правил, по умолчанию `<report_dir>/dict/merged_dictionary.csv` (определяется в
+`app_config.json5` → `data_paths.dict_file`). **Относительный** путь разрешается
+относительно директории отчёта (а не текущей рабочей директории); **абсолютный**
+путь используется как есть. Если файл не найден, `run`/`process_data` выбрасывают
+`FileNotFoundError`, в сообщении указывают переданный путь, разрешённый путь и
+абсолютный путь поиска — уберите `--dict-path`, чтобы вернуться к словарю по
+умолчанию.
 
 ### 4. Пример ноутбука (Jupyter)
 

@@ -29,9 +29,9 @@ everything else is **[code-verified]** by reading the implementation.
 | Entry point | Location | Notes |
 |---|---|---|
 | CLI `mko-data-cleaner init [--force]` | [app.py `init`](../../src/mko_data_cleaner/app.py) | Copies settings templates into the per-user settings directory; reachable without prior settings since the import fix |
-| CLI `mko-data-cleaner run <report_dir> [-v] [--settings-dir DIR]` | [app.py `run`](../../src/mko_data_cleaner/app.py) | `<report_dir>` must exist (`typer` `exists=True`); any exception prints `❌ Ошибка: …` and exits with code 1 |
+| CLI `mko-data-cleaner run <report_dir> [-v] [--settings-dir DIR] [--dict-path FILE]` | [app.py `run`](../../src/mko_data_cleaner/app.py) | `<report_dir>` must exist (`typer` `exists=True`); `--dict-path FILE` overrides the dictionary file (relative path resolves against the report directory, absolute as-is; a missing file raises `FileNotFoundError`); any exception prints `❌ Ошибка: …` and exits with code 1 |
 | CLI `mko-data-cleaner list-settings [--settings-dir DIR]` | [app.py `list_settings`](../../src/mko_data_cleaner/app.py) | Lists JSON5 files in the user settings directory; prints a hint if the directory does not exist (does not raise) |
-| Python `process_data(report_path, settings_dir=None)` | [app.py](../../src/mko_data_cleaner/app.py) | Synchronous; raises `FileNotFoundError` if the path is not a directory; raises `SettingsNotInitializedError` if settings are missing |
+| Python `process_data(report_path, settings_dir=None, dict_path=None)` | [app.py](../../src/mko_data_cleaner/app.py) | Synchronous; raises `FileNotFoundError` if the path is not a directory or if a `dict_path` override file is missing; raises `SettingsNotInitializedError` if settings are missing |
 | Python `initialize_settings(force=False, settings_dir=None)` | [app.py](../../src/mko_data_cleaner/app.py) | **Known gap:** `settings_dir` is accepted but not forwarded to `init_project`; settings are always written to the default platformdirs location [runtime-verified] |
 | Console script | [pyproject.toml `[project.scripts]`](../../pyproject.toml) | `mko-data-cleaner = "mko_data_cleaner.app:app"` |
 
@@ -79,6 +79,16 @@ Default layout (all paths relative to the report directory; configured in
 ├── clean_data/                  # export_folder — created if missing; output
 └── null_data_<timestamp>_N.csv.gz  # written at the report root
 ```
+
+The dictionary is read from `<report_dir>/{data_paths.dict_file}` (default
+`dict/merged_dictionary.csv`) unless overridden. The `--dict-path FILE` CLI flag
+or the `dict_path=` argument to `process_data` selects an alternative dictionary
+file: a **relative** path resolves against the report directory (not the current
+working directory) and an **absolute** path is used as-is. When the resolved
+file does not exist, `AppService.run_report` raises `FileNotFoundError` naming
+the override path, the resolved path, and the absolute searched path
+([app_service.py `dict_path` / `run_report`](../../src/mko_data_cleaner/core/app_service.py))
+[code-verified].
 
 - Raw files must match the configured extension (`data_file_settings.extension`,
   default template value `gz`; the repository example uses `csv`).
@@ -269,10 +279,13 @@ carries an explicit limitation note. See
 | Database | `<report>/data_base/db_example.db` | deleted at the end of the run |
 | Logs | user settings directory `log.log` (RotatingFileHandler, 2 MB × 2) + console | via `log_config.json5` |
 
-Note: `process_data` currently returns `None`; the result object (paths +
-timings + row counts) is owner-confirmed but not implemented — see
-[product-overview.md](product-overview.md) and
-[open-questions.md](open-questions.md) D-6 [runtime-verified].
+Note: `process_data` / `AppService.run_report` returns a `ReportResult`
+(model in [models.py `ReportResult`](../../src/mko_data_cleaner/core/models.py);
+field table in the [README](../../README.md)) with output paths, timings, and row
+counts. The `dict_path` override is **not** a field on `ReportResult` (owner-confirmed
+interface) — it only selects which dictionary file is read and is threaded via
+`get_app_service(settings_dir, dict_path)` → `AppService.__init__` → the
+`dict_path` property ([architecture.md](architecture.md)).
 
 ## Errors, Warnings and Edge Cases
 
@@ -281,6 +294,7 @@ timings + row counts) is owner-confirmed but not implemented — see
 | Import without settings | Succeeds, no side effects | [tested] [runtime-verified] |
 | `run`/`process_data` without settings | `SettingsNotInitializedError` (catchable as `FileNotFoundError`); CLI prints the error and exits 1 | [app.py `run`](../../src/mko_data_cleaner/app.py) [tested] |
 | `process_data` with a file path or missing dir | `FileNotFoundError("Directory not found: …")` | [app.py `process_data`](../../src/mko_data_cleaner/app.py) |
+| `--dict-path`/`dict_path` override points to a missing file | `FileNotFoundError` naming the override path, the resolved path, and the absolute searched path | [`run_report`](../../src/mko_data_cleaner/core/app_service.py) [code-verified] |
 | No raw files with the configured extension | `WrongDataSettings` with a "check settings" message | [`_set_files_params`](../../src/mko_data_cleaner/core/csv_service.py) [runtime-verified] |
 | Ragged CSV row (more fields than the header) | Polars `ComputeError` aborts the run (no `truncate_ragged_lines` configured) | [runtime-verified] |
 | Invalid `app_config.json5` contents | Pydantic validation error wrapped in `ConfigError` | [app.py `app_config` property](../../src/mko_data_cleaner/core/app_service.py) |
