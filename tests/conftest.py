@@ -178,3 +178,42 @@ def external_dict_file(tmp_path: Path) -> Path:
     ]
     file_path.write_text("\n".join(dict_lines) + "\n", encoding="utf-8")
     return file_path
+
+
+@pytest.fixture
+def replace_without_extra_cols_report(tmp_path: Path) -> Path:
+    """Report with a 5-column dictionary that has REPLACE rules but no
+    extra value columns.
+
+    Dictionary columns: action(0), match(1), search(2), value(3), term(4).
+    col_indexes: action=0, match=1, search=2, term=4 → max_idx=4 →
+    extra_col_idx = range(5, 5) = [] → no extra columns.
+
+    This triggers the original bug: REPLACE rules reach _apply_replace
+    with an empty extra_cols list → SQL syntax error.
+    """
+    report_dir = tmp_path / "report"
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+        "id3;2024-02-01;2024;02;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    # 5-column dict: no column at index 5+ → no extra columns
+    dict_lines = [
+        "action;match;search;value;term",
+        "d;f;4;NULL;Brand2",  # DELETE: remove Brand2 rows
+        "r;f;4;NULL;Brand1",  # REPLACE: find Brand1, but no extra column to write
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir

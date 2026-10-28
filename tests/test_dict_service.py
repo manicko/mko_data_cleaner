@@ -1,3 +1,5 @@
+import logging
+
 import polars as pl
 import pytest
 
@@ -230,12 +232,16 @@ def test_build_query_no_strict_column(sample_dictionary, dict_indexes):
 
 def test_generate_rules_blocks_ordering(dict_indexes):
     """generate_rules_blocks yields DELETE before REPLACE before ADD,
-    and REPLACE groups respect group_by_cols output order."""
+    and REPLACE groups respect group_by_cols output order.
+
+    Note: the REPLACE row with tag=None ("Banana") is pruned by
+    _prune_empty_value_rules because it has no value to replace.
+    """
     data = [
         ["d", "f", 3, None, "Удалить", None],  # DELETE
-        ["r", "f", 1, None, "Apple", "replace_1"],  # REPLACE group 1 (tag non-null)
-        ["r", "f", 1, None, "Sam", "replace_2"],  # REPLACE group 1 (tag non-null)
-        ["r", "f", 4, None, "Banana", None],  # REPLACE group 2 (tag null → diff keys)
+        ["r", "f", 1, None, "Apple", "replace_1"],  # REPLACE (tag non-null)
+        ["r", "f", 1, None, "Sam", "replace_2"],  # REPLACE (tag non-null, same group)
+        ["r", "f", 4, None, "Banana", None],  # REPLACE with tag=None → pruned
         ["a", "f", 3, None, "Coca-Cola", "brand"],  # ADD
     ]
     df = pl.DataFrame(
@@ -259,7 +265,7 @@ def test_generate_rules_blocks_ordering(dict_indexes):
     assert action_order.index("r") < action_order.index("a")
     # REPLACE blocks should be grouped (group_by_cols)
     replace_blocks = [i for i, (action, _) in enumerate(blocks) if action == "r"]
-    assert len(replace_blocks) == 2  # two REPLACE groups by column set
+    assert len(replace_blocks) == 1  # Banana (tag=None) pruned → one group
 
 
 def test_build_match_query_format(sample_dictionary, dict_indexes):
@@ -315,3 +321,80 @@ def test_build_match_query_out_of_range_raises(dict_indexes, sample_dictionary):
     msg = str(exc_info.value)
     assert "building match query" in msg
     assert "data table only has 5 columns" in msg
+
+
+# --------------------------------------------------------------------------- #
+# _prune_empty_value_rules — dictionary-level protection
+# --------------------------------------------------------------------------- #
+def test_prune_empty_replace_rules_with_warning(dict_indexes, caplog):
+    """REPLACE rules with no values in extra columns are pruned with a warning."""
+    data = [
+        ["d", "f", 4, None, "Brand2", None],  # DELETE — no extra col value, kept
+        ["r", "f", 4, None, "Brand1", None],  # REPLACE — tag=None → pruned
+        ["r", "f", 4, None, "Brand3", "replacement"],  # REPLACE — tag set → kept
+    ]
+    df = pl.DataFrame(
+        data,
+        schema=["action", "match", "search", "extra_col", "term", "tag"],
+        orient="row",
+    )
+    mapping_dict = MappingDict(data=df, action_col_indexes=dict_indexes)
+
+    with caplog.at_level(logging.WARNING, logger="mko_data_cleaner.core.dict_service"):
+        mapping_dict.build_mapping(
+            "adId",
+            "researchDate",
+            "programName",
+            "channelName",
+            "brand",
+            extra_col_names=["tag"],
+        )
+
+    # Warning logged for the pruned REPLACE rule
+    assert any(
+        "no values in extra columns" in record.message.lower()
+        for record in caplog.records
+    )
+
+    # The REPLACE-with-empty-tag row was removed; 2 rows remain
+    assert mapping_dict.data.height == 2
+
+    replace_rows = mapping_dict.data.filter(pl.col(MappingColumns.action) == "r")
+    assert replace_rows.height == 1
+    assert replace_rows["tag"][0] == "replacement"
+
+
+def test_prune_empty_rules_when_no_extra_columns(dict_indexes, caplog):
+    """When the dict has no extra columns at all, REPLACE and ADD rules are
+    pruned with a warning, DELETE rules are kept."""
+    data = [
+        ["d", "f", 4, None, "Brand2"],  # DELETE — kept
+        ["r", "f", 4, None, "Brand1"],  # REPLACE — pruned (no extra cols)
+        ["a", "f", 4, None, "Brand3"],  # ADD — pruned (no extra cols)
+    ]
+    df = pl.DataFrame(
+        data,
+        schema=["action", "match", "search", "extra_col", "term"],
+        orient="row",
+    )
+    mapping_dict = MappingDict(data=df, action_col_indexes=dict_indexes)
+
+    with caplog.at_level(logging.WARNING, logger="mko_data_cleaner.core.dict_service"):
+        mapping_dict.build_mapping(
+            "adId",
+            "researchDate",
+            "programName",
+            "channelName",
+            "brand",
+            extra_col_names=[],
+        )
+
+    # Warning about no extra columns
+    assert any(
+        "no extra columns configured" in record.message.lower()
+        for record in caplog.records
+    )
+
+    # Only the DELETE rule remains
+    assert mapping_dict.data.height == 1
+    assert mapping_dict.data["action"][0] == "d"

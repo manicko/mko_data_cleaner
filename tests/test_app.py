@@ -14,7 +14,10 @@ from typer.testing import CliRunner
 
 from mko_data_cleaner.app import app, initialize_settings, process_data
 from mko_data_cleaner.core.app_service import get_app_service
-from mko_data_cleaner.core.errors import DictionaryStructureError, SettingsNotInitializedError
+from mko_data_cleaner.core.errors import (
+    DictionaryStructureError,
+    SettingsNotInitializedError,
+)
 from mko_data_cleaner.core.models import DataFileExtension, ReportResult
 from mko_data_cleaner.core.paths import APP_DIR, APP_NAME, AppPaths
 from mko_data_cleaner.core.utils import config_to_dict
@@ -502,7 +505,12 @@ def test_run_cli_separator_mismatch(
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["run", str(separator_mismatch_report), "--settings-dir", str(populated_settings)],
+        [
+            "run",
+            str(separator_mismatch_report),
+            "--settings-dir",
+            str(populated_settings),
+        ],
     )
     assert result.exit_code == 1
     assert "Ошибка" in result.output
@@ -534,10 +542,7 @@ def test_process_data_with_dict_path_override(
     merged = pl.concat(dfs)
 
     all_cells = [
-        str(v)
-        for col in merged.columns
-        for v in merged[col].to_list()
-        if v is not None
+        str(v) for col in merged.columns for v in merged[col].to_list() if v is not None
     ]
     assert "Brand2" not in all_cells
     assert all_cells.count("Brand1") == 2
@@ -621,7 +626,9 @@ def test_dict_path_relative_resolves_against_report_dir(
     )
 
     # Property-level check: relative path resolves against base_path (report dir).
-    service = get_app_service(settings_dir=populated_settings, dict_path="custom_dict.csv")
+    service = get_app_service(
+        settings_dir=populated_settings, dict_path="custom_dict.csv"
+    )
     service.base_path = synthetic_report
     assert service.dict_path == custom
     assert service.dict_path.is_file()
@@ -640,11 +647,46 @@ def test_dict_path_relative_resolves_against_report_dir(
     dfs = [pl.read_csv(f, separator=";") for f in export_files]
     merged = pl.concat(dfs)
     all_cells = [
-        str(v)
-        for col in merged.columns
-        for v in merged[col].to_list()
-        if v is not None
+        str(v) for col in merged.columns for v in merged[col].to_list() if v is not None
     ]
     assert "Brand1" not in all_cells  # deleted by the override dictionary
     assert all_cells.count("Brand2") == 1
     assert "kept_by_brand" in merged["tag"].drop_nulls().to_list()
+
+
+# ------------------------------------------------------------------- #
+# B5: REPLACE rules without extra value columns are pruned, not crashed
+# ------------------------------------------------------------------- #
+def test_process_data_replace_rules_without_extra_cols(
+    populated_settings, replace_without_extra_cols_report
+):
+    """A dictionary with REPLACE rules but no extra value columns must be
+    pruned with a warning, not crash with a SQL syntax error.
+
+    Regression test for the bug where _apply_replace received an empty
+    extra_cols list and generated invalid SQL (dangling comma in SELECT,
+    empty SET clause).
+    """
+    # Must not raise sqlite3.OperationalError
+    result = process_data(
+        replace_without_extra_cols_report, settings_dir=populated_settings
+    )
+
+    assert isinstance(result, ReportResult)
+    assert result.rows_loaded == 3
+    # DELETE rule: Brand2 row removed → 2 rows exported
+    assert result.rows_exported == 2
+    assert result.duration > 0.0
+    assert set(result.timings.keys()) == {"import", "mapping", "export"}
+
+    # Verify DELETE rule worked (Brand2 absent, Brand1 ×2)
+    export_files = sorted(result.export_dir.glob("*.csv.gz"))
+    assert export_files
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+
+    all_cells = [
+        str(v) for col in merged.columns for v in merged[col].to_list() if v is not None
+    ]
+    assert "Brand2" not in all_cells  # DELETE rule applied
+    assert all_cells.count("Brand1") == 2  # Brand1 rows survived

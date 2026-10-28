@@ -94,6 +94,10 @@ class MappingDict:
             df_action = self.data.filter(
                 pl.col(MappingColumns.action) == action
             ).select(keep_cols)
+
+            if df_action.is_empty():
+                continue
+
             match action:
                 case ActionType.DELETE | ActionType.ADD:
                     yield action, df_action
@@ -142,6 +146,60 @@ class MappingDict:
         # replace user defined names with internal standard
         self._data_actions.columns = action_names
 
+    def _prune_empty_value_rules(self) -> None:
+        """Drop REPLACE/ADD rules that carry no values in extra columns.
+
+        A REPLACE or ADD rule that has a search term but no replacement/add
+        values is meaningless: it matches rows in the data table but has
+        nothing to apply.  Left in, it produces an empty column list that
+        crashes downstream SQL generation with a syntax error.
+
+        This method:
+        1. Logs a WARNING per skipped row so the user understands which
+           dictionary entries were ignored.
+        2. Removes the offending rows from ``self.data`` so that
+           subsequent ``fts_data`` / ``like_data`` / ``generate_rules_blocks``
+           computations never see them.
+        """
+        action_col = MappingColumns.action
+        replace_or_add = pl.col(action_col).is_in([ActionType.REPLACE, ActionType.ADD])
+
+        if not self.extra_col_names:
+            # No extra columns configured at all — every REPLACE and ADD
+            # rule is meaningless because there is nowhere to write values.
+            invalid = self.data.filter(replace_or_add)
+            if not invalid.is_empty():
+                counts = invalid.group_by(action_col).len()
+                for action_val, cnt in counts.iter_rows():
+                    logger.warning(
+                        "Skipping %d %s rule(s): no extra columns configured. "
+                        "These rules have a search term but nothing to %s.",
+                        cnt,
+                        action_val,
+                        "replace" if action_val == ActionType.REPLACE else "add",
+                    )
+            self.data = self.data.filter(~replace_or_add)
+            return
+
+        # Build a boolean expression: True when the row has at least one
+        # non-null, non-empty extra-column value.
+        value_exprs = [
+            (pl.col(c).is_not_null()) & (pl.col(c) != "") for c in self.extra_col_names
+        ]
+        has_value = pl.any_horizontal(value_exprs)
+
+        invalid_mask = replace_or_add & ~has_value
+        dropped = self.data.filter(invalid_mask)
+        if not dropped.is_empty():
+            logger.warning(
+                "Skipping %d REPLACE/ADD rule(s): no values in extra columns "
+                "%s. The search terms are valid but there is nothing to "
+                "replace or add.",
+                dropped.height,
+                self.extra_col_names,
+            )
+        self.data = self.data.filter(~invalid_mask)
+
     def build_mapping(self, *tbl_columns: str, extra_col_names: list[str]):
         self._table_columns = list(tbl_columns)
         # update extra_col_names with names from db
@@ -152,6 +210,10 @@ class MappingDict:
 
         # adding index to dataframe
         self.data = self.data.with_row_index(MappingColumns.mapping_index, offset=1)
+
+        # Drop REPLACE/ADD rules that have no values in extra columns —
+        # they are meaningless and would crash SQL generation downstream.
+        self._prune_empty_value_rules()
 
         # build dictionary with data column index : name
         self.data_col_index = self._get_data_col_index()
@@ -273,7 +335,7 @@ class MappingDict:
         for row in df.iter_rows(named=True):
             try:
                 indexes = list(
-                    map(lambda x: (int(x.strip())), row[search_col].split(separator))
+                    map(lambda x: int(x.strip()), row[search_col].split(separator))
                 )
                 filters = row[term_col].split(separator)
                 match_query = self.build_match_query(indexes, filters)

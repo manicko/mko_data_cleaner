@@ -1,4 +1,5 @@
 import importlib.util
+import logging
 import os
 import subprocess
 import sys
@@ -649,3 +650,251 @@ def test_build_non_mapped_multi_extra_cols(db_worker):
     assert "Name1" in names  # tag NULL → selected
     assert "Name2" in names  # grp NULL → selected
     assert "Name3" not in names  # both set → not selected
+
+
+# --------------------------------------------------------------------------- #
+# Regression tests: empty-column-list guards (no-op + warning)
+# --------------------------------------------------------------------------- #
+def test_apply_replace_empty_extra_cols_is_noop(db_worker, caplog):
+    """_apply_replace must be a no-op (with warning) when no column_names
+    match the DB worker's extra_columns, instead of crashing with a
+    SQL syntax error (dangling comma + empty SET).
+
+    Regression test for the original bug: a REPLACE rule whose columns
+    don't intersect the data table's extra columns.
+    """
+    # --- arrange: db with extra column "sponsor" ---
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=["sponsor"])
+    db_worker.create_table(db_worker.data_tbl_name, "adId", "brand", "sponsor")
+
+    target = db_worker.target_table
+
+    insert_q = f"INSERT INTO {target} (adId, brand, sponsor) VALUES (?, ?, ?)"
+    for ad_id in ("ad1", "ad2", "ad3"):
+        db_worker.perform_query(insert_q, (ad_id, "BrandX", None))
+
+    rowids = [
+        r[0] for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
+    ]
+    assert len(rowids) == 3
+
+    # joined_matches_table with a match but no usable extra columns
+    db_worker.perform_query(
+        f"CREATE TEMP TABLE {db_worker._joined_matches_table} "
+        f"(data_rowid INTEGER, mapping_index INTEGER, sponsor TEXT)"
+    )
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker._joined_matches_table} "
+        f"(data_rowid, mapping_index, sponsor) VALUES (?, ?, ?)",
+        (rowids[0], 1, "FromRule"),
+    )
+
+    # --- act: column_names has no match for extra_columns ---
+    with caplog.at_level(logging.WARNING, logger="mko_data_cleaner.core.db_service"):
+        db_worker._apply_replace(column_names=["nonexistent_col"])
+
+    # --- assert: warning logged ---
+    assert any(
+        "no matching extra columns" in record.message.lower()
+        for record in caplog.records
+    ), "Expected warning about no matching extra columns"
+
+    # --- assert: data unchanged ---
+    sponsors = [
+        r[0]
+        for r in db_worker.perform_query(f"SELECT sponsor FROM {target}").fetchall()
+    ]
+    assert sponsors == [None, None, None]
+
+
+def test_apply_replace_with_empty_db_extra_cols_is_noop(db_worker, caplog):
+    """_apply_replace must be a no-op when the DB worker has no extra columns
+    at all (the original crash scenario where extra_cols filter yields [])."""
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=[])
+    db_worker.create_table(db_worker.data_tbl_name, "adId", "brand")
+
+    target = db_worker.target_table
+
+    insert_q = f"INSERT INTO {target} (adId, brand) VALUES (?, ?)"
+    for ad_id in ("ad1", "ad2"):
+        db_worker.perform_query(insert_q, (ad_id, "BrandX"))
+
+    rowids = [
+        r[0] for r in db_worker.perform_query(f"SELECT rowid FROM {target}").fetchall()
+    ]
+
+    db_worker.perform_query(
+        f"CREATE TEMP TABLE {db_worker._joined_matches_table} "
+        f"(data_rowid INTEGER, mapping_index INTEGER)"
+    )
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker._joined_matches_table} "
+        f"(data_rowid, mapping_index) VALUES (?, ?)",
+        (rowids[0], 1),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mko_data_cleaner.core.db_service"):
+        db_worker._apply_replace(column_names=["mapping_index"])
+
+    assert any(
+        "no matching extra columns" in record.message.lower()
+        for record in caplog.records
+    )
+
+    # Data untouched
+    brands = [
+        r[0] for r in db_worker.perform_query(f"SELECT brand FROM {target}").fetchall()
+    ]
+    assert brands == ["BrandX", "BrandX"]
+
+
+def test_build_non_mapped_empty_extra_cols_is_noop(db_worker, caplog):
+    """build_non_mapped must not crash when extra_columns is empty.
+
+    Creates an empty non_mapped table (all rows are 'mapped' when there
+    are no extra columns to check) instead of emitting `WHERE  IS NULL`.
+    """
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=[])
+    db_worker.search_columns = []  # explicitly empty, not None
+    db_worker.create_table(db_worker.data_tbl_name, "adId", "brand")
+
+    target = db_worker.target_table
+    db_worker.perform_query(
+        f"INSERT INTO {target} (adId, brand) VALUES (?, ?)",
+        ("ad1", "Brand1"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mko_data_cleaner.core.db_service"):
+        db_worker.build_non_mapped()
+
+    assert any(
+        "no extra columns" in record.message.lower() for record in caplog.records
+    )
+
+    # non_mapped_table should exist but be empty
+    rows = db_worker.perform_query(
+        f"SELECT COUNT(*) FROM {db_worker.non_mapped_table}"
+    ).fetchone()
+    assert rows[0] == 0
+
+
+def test_sync_with_data_table_empty_extra_cols_is_noop(db_worker, caplog):
+    """sync_with_data_table with no extra columns skips UPDATE/INSERT
+    but still runs DELETE to propagate row deletions."""
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=[])
+    db_worker.index_column = "adId"
+    db_worker.search_columns = []  # explicitly empty
+    db_worker._index_tbl_name = "data_table_distinct"
+
+    # Create both tables — index table has only the index column (no extras)
+    db_worker.create_table(db_worker._index_tbl_name, "adId")
+    db_worker.create_table(db_worker.data_tbl_name, "adId", "brand")
+
+    target = db_worker.data_tbl_name
+    src = db_worker._index_tbl_name
+
+    # Insert data into index table
+    db_worker.perform_query(
+        f"INSERT INTO {src} (adId) VALUES (?)",
+        ("ad1",),
+    )
+    # Insert data into data table
+    db_worker.perform_query(
+        f"INSERT INTO {target} (adId, brand) VALUES (?, ?)",
+        ("ad1", "Brand1"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mko_data_cleaner.core.db_service"):
+        db_worker.sync_with_data_table()
+
+    assert any(
+        "no extra columns to sync" in record.message.lower()
+        for record in caplog.records
+    )
+
+    # Both tables unchanged (same index value → DELETE finds no orphans)
+    target_rows = db_worker.perform_query(f"SELECT COUNT(*) FROM {target}").fetchone()
+    src_rows = db_worker.perform_query(f"SELECT COUNT(*) FROM {src}").fetchone()
+    assert target_rows[0] == 1
+    assert src_rows[0] == 1
+
+
+def test_update_index_from_data_empty_search_columns(db_worker, caplog):
+    """update_index_from_data must handle empty search_columns without
+    producing a leading comma in the INSERT/SELECT.
+
+    When search_columns is empty, only the index column is inserted.
+    """
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=[])
+    db_worker.index_column = "adId"
+    db_worker.search_columns = []  # explicitly empty, not None
+    db_worker.date_column = None  # avoid date column complications in this test
+    db_worker._index_tbl_name = "data_table_distinct"
+
+    # Create tables
+    db_worker.create_table(db_worker._index_tbl_name, "adId")
+    db_worker.create_table(db_worker.data_tbl_name, "AdId", "brand")
+
+    # Insert data into data table
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker.data_tbl_name} (AdId, brand) VALUES (?, ?)",
+        ("ad1", "Brand1"),
+    )
+    db_worker.perform_query(
+        f"INSERT INTO {db_worker.data_tbl_name} (AdId, brand) VALUES (?, ?)",
+        ("ad1", "Brand2"),  # duplicate index → GROUP BY keeps one
+    )
+
+    # search_columns is empty
+    assert db_worker.search_columns == []
+
+    # Must not raise
+    db_worker.update_index_from_data()
+
+    # Index table should have 1 row (GROUP BY adId)
+    rows = db_worker.perform_query(
+        f"SELECT COUNT(*) FROM {db_worker._index_tbl_name}"
+    ).fetchone()
+    assert rows[0] == 1
+
+
+def test_apply_add_empty_extra_cols_is_noop(db_worker, caplog):
+    """_apply_add must be a no-op (with warning) when extra_columns is empty,
+    instead of emitting an incomplete INSERT with no SELECT body."""
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=[])
+    db_worker.create_table(db_worker.data_tbl_name, "AdId", "brand")
+
+    with caplog.at_level(logging.WARNING, logger="mko_data_cleaner.core.db_service"):
+        db_worker._apply_add(separator=", ")
+
+    assert any(
+        "no extra columns configured" in record.message.lower()
+        for record in caplog.records
+    )
+
+
+def test_insert_matches_empty_search_columns_is_noop(db_worker, caplog):
+    """insert_matches must be a no-op (with warning) when search_columns
+    is empty, instead of building an empty UNION ALL query that causes a
+    SQL syntax error (INSERT with no SELECT body)."""
+    db_worker.set_data_tbl_columns("adId", "brand", extra_cols=["sponsor"])
+    db_worker.search_columns = []  # no columns to search on
+    db_worker.create_table(db_worker.data_tbl_name, "AdId", "brand", "sponsor")
+
+    # Create the temp mapping table that insert_matches consumes and drops
+    db_worker.perform_query(
+        "CREATE TEMP TABLE temp_tbl (mapping_index INTEGER, column_name TEXT, pattern TEXT)"
+    )
+    assert db_worker.tbl_exists("temp_tbl")
+
+    # Must not raise
+    with caplog.at_level(logging.WARNING, logger="mko_data_cleaner.core.db_service"):
+        db_worker.insert_matches(mapping_table="temp_tbl")
+
+    assert any(
+        "no search columns" in record.message.lower()
+        for record in caplog.records
+    )
+
+    # temp mapping table dropped as cleanup
+    assert not db_worker.tbl_exists("temp_tbl")

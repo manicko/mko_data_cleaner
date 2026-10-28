@@ -154,7 +154,8 @@ class DBWorker:
 
     def _validate_required(self) -> None:
         for name in self.REQUIRED_FIELDS:
-            if not getattr(self, name):
+            value = getattr(self, name)
+            if value is None:
                 raise WrongDataSettings(f"{name} not set")
 
     # ---------------------------------------------------------
@@ -383,8 +384,8 @@ class DBWorker:
     def _create_index(self, table_name: str, *columns: str, unique_index: bool = False):
         unique = "UNIQUE" if unique_index else ""
         sql = f"""
-            CREATE {unique} INDEX IF NOT EXISTS {table_name}_{'_'.join(columns)}_index
-            ON {table_name}({', '.join(columns)});
+            CREATE {unique} INDEX IF NOT EXISTS {table_name}_{"_".join(columns)}_index
+            ON {table_name}({", ".join(columns)});
             """
         self.perform_query(sql)
 
@@ -399,9 +400,8 @@ class DBWorker:
 
     def update_index_from_data(self):
         if self.index_column:
-            insert_columns = select_columns = (
-                f"{', '.join(self.search_columns)}, {self.index_column}"
-            )
+            col_parts = list(self.search_columns) + [self.index_column]
+            insert_columns = select_columns = ", ".join(col_parts)
             if self.date_column:
                 insert_columns += f", {self.date_column}"
                 select_columns += f", MAX({self.date_column})"
@@ -428,30 +428,41 @@ class DBWorker:
 
         cols_update = ", ".join(f"{c}=s.{c}" for c in cols if c != index_col)
 
-        update_sql = f"""
-        UPDATE {target_tbl} AS t
-        SET {cols_update}
-        FROM {source_tbl} AS s
-        WHERE t.{index_col} = s.{index_col};
-        """
+        if not cols_update:
+            logger.warning(
+                "No extra columns to sync between %s and %s. "
+                "Skipping UPDATE and INSERT, but DELETE will still sync "
+                "row deletions from the index table.",
+                target_tbl,
+                source_tbl,
+            )
+        else:
+            update_sql = f"""
+            UPDATE {target_tbl} AS t
+            SET {cols_update}
+            FROM {source_tbl} AS s
+            WHERE t.{index_col} = s.{index_col};
+            """
 
-        self.perform_query(update_sql)
+            self.perform_query(update_sql)
 
-        insert_cols = ", ".join(cols)
+            insert_cols = ", ".join(cols)
 
-        insert_sql = f"""
-        INSERT INTO {target_tbl} ({insert_cols})
-        SELECT {insert_cols}
-        FROM {source_tbl} AS s
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM {target_tbl} AS t
-            WHERE t.{index_col}=s.{index_col}
-        );
-        """
+            insert_sql = f"""
+            INSERT INTO {target_tbl} ({insert_cols})
+            SELECT {insert_cols}
+            FROM {source_tbl} AS s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM {target_tbl} AS t
+                WHERE t.{index_col}=s.{index_col}
+            );
+            """
 
-        self.perform_query(insert_sql)
+            self.perform_query(insert_sql)
 
+        # DELETE always runs — it propagates row deletions (from DELETE rules)
+        # from the index table back to the data table, regardless of extra columns.
         delete_sql = f"""
         DELETE FROM {target_tbl} AS t
         WHERE NOT EXISTS (
@@ -509,7 +520,6 @@ class DBWorker:
                         VALUES (new.rowid, {new_columns});
                     END;
             """,
-
             "delete": f"""
                     CREATE TRIGGER IF NOT EXISTS {tbl_name}_delete 
                     AFTER DELETE ON {tbl_name}
@@ -518,7 +528,6 @@ class DBWorker:
                         VALUES ('delete', old.rowid, {old_columns});
                     END;
             """,
-
             "update": f"""
             CREATE TRIGGER IF NOT EXISTS {tbl_name}_update 
             AFTER UPDATE ON {tbl_name} 
@@ -579,6 +588,14 @@ class DBWorker:
         data_rowid_col = MappingColumns.data_rowid
         pattern_col = MappingColumns.pattern
         matches_table = self._full_matches_table
+
+        if not self.search_columns:
+            logger.warning(
+                "No search columns configured — cannot match LIKE rules. "
+                "Skipping insert_matches."
+            )
+            self.drop_table(mapping_table)
+            return
 
         union_queries = []
 
@@ -663,6 +680,16 @@ class DBWorker:
         extra_cols_set = set(self.extra_columns)
         extra_cols = [col for col in column_names if col in extra_cols_set]
 
+        if not extra_cols:
+            logger.warning(
+                "Replace rules found but no matching extra columns in the "
+                "data table. The dictionary has REPLACE rules whose columns "
+                "do not intersect the data table's extra columns (%s). "
+                "Skipping replace operation to avoid a SQL error.",
+                self.extra_columns,
+            )
+            return
+
         select_cols = ",\n".join(f"{col}" for col in extra_cols)
         update_clause = ",\n".join(f"{col} = rr.{col}" for col in extra_cols)
 
@@ -689,6 +716,14 @@ class DBWorker:
         self.perform_query(sql)
 
     def _apply_add(self, separator=", "):
+
+        if not self.extra_columns:
+            logger.warning(
+                "Add rules found but no extra columns configured in the "
+                "data table. The dictionary has ADD rules but there are "
+                "no extra columns to populate. Skipping add operation."
+            )
+            return
 
         logger.debug(f"Apply add rules to {self.target_table}")
 
@@ -764,11 +799,24 @@ class DBWorker:
         Get rows with NULL values for defined columns
         """
         select_cols = ", ".join(self.search_columns + self.extra_columns)
+
+        if not self.extra_columns:
+            logger.warning(
+                "No extra columns configured — non_mapped table will be "
+                "empty because there are no columns to check for NULL values."
+            )
+            query = (
+                f"CREATE TEMP TABLE {self.non_mapped_table} AS "
+                f"SELECT * FROM {self.target_table} WHERE 0"
+            )
+            self.perform_query(query)
+            return
+
         query = f"""
             CREATE TEMP TABLE {self.non_mapped_table} AS 
                 SELECT DISTINCT {select_cols} 
                 FROM {self.target_table} 
-                WHERE   {' | '.join(self.extra_columns)} IS NULL                
+                WHERE   {" | ".join(self.extra_columns)} IS NULL                
             """
         self.perform_query(query)
 
