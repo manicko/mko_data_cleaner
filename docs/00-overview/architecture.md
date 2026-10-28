@@ -90,7 +90,7 @@ Call direction is strictly `app.py → core/*`; no core module imports `app.py`
 | `core/models.py` | Pydantic v2 configuration models and `StrEnum` constants (`ActionType`, `MatchType`, `MappingColumns`) | — |
 | `core/paths.py` | Settings/report path resolution (`platformdirs`), directory/file helpers | `PathResolver`, `AppPaths`, `APP_PATHS` |
 | `core/utils.py` | SQL-identifier hygiene, JSON5 loading, file listing, progress bar | — |
-| `core/errors.py` | Exception hierarchy (`WrongDataSettings`, `ConfigError`, `SettingsNotInitializedError`, …) | — |
+| `core/errors.py` | Exception hierarchy (`WrongDataSettings`, `ConfigError`, `SettingsNotInitializedError`, `DictionaryStructureError`, …) | — |
 | `core/init_service.py` | Copies the packaged JSON5 templates into the user settings directory | `init_project` |
 
 ## Per-Key Rule Resolution (intended design, owner decision D15)

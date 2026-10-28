@@ -287,6 +287,7 @@ timings + row counts) is owner-confirmed but not implemented — see
 | Missing/invalid JSON5 file read by `config_to_dict` | Returns `{}` (defense in depth) | [utils.py `config_to_dict`](../../src/mko_data_cleaner/core/utils.py) [tested] |
 | Header names that are not valid SQL identifiers | Cleaned (transliterated, alphanumerics kept) with a warning | [`clean_names`](../../src/mko_data_cleaner/core/utils.py) [runtime-verified] |
 | Configured `date_column` missing | ERROR log, then auto-detection; if none found, no date column is used | [runtime-verified] |
+| Dictionary CSV separator mismatch (dictionary has too few columns vs `col_indexes`) | `DictionaryStructureError` with `file_path`, `step`, expected/actual column counts, and a separator-mismatch hint; CLI prints `❌ Ошибка: …`; exits 1 | [`DictionaryStructureError`](../../src/mko_data_cleaner/core/errors.py) [`get_dictionary`](../../src/mko_data_cleaner/core/csv_service.py) [`_initialize_mapping`](../../src/mko_data_cleaner/core/dict_service.py) |
 | Invalid FTS dictionary row | Warning, rule skipped | [`_build_fts_query`](../../src/mko_data_cleaner/core/dict_service.py) |
 | Duplicate dictionary rows | Deduplicated when the merged dictionary is generated (`unique()`); **not** deduplicated when reading an existing `merged_dictionary.csv` | [get_merged_dictionary](../../src/mko_data_cleaner/core/csv_service.py) |
 | Dictionary column entirely empty | Column dropped (not exported) | [`_drop_empty_columns`](../../src/mko_data_cleaner/core/dict_service.py) [runtime-verified] |
