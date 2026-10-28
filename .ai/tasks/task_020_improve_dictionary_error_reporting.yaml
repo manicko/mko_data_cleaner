@@ -1,14 +1,20 @@
 # Task: Improve error reporting for dictionary structure mismatches
+# Refined from the original draft to remove unnecessary app.py changes and
+# the object.__setattr__ hack. The rich DictionaryStructureError.__str__
+# flows through the existing app.py catch-all handler — no app.py change
+# is needed (minimal scope).
 
 id: task_020
+
 title: Make dictionary structure errors informative with file path, step context, and remediation hints
 
 priority: high
+
 depends_on:
-  - (none — this is a leaf task; can be done independently)
+  - (none — this is a leaf task)
 
 source_reference: .ai/problems/04_uninformative_error_on_dictionary_column_mismatch.md
-source_section: §6 — Proposed solution directions
+source_section: §6 — Proposed solution directions (A–E); §8 test strategy
 
 description: >
   When a dictionary CSV file uses a separator that doesn't match the
@@ -16,17 +22,22 @@ description: >
   DataFrame. MappingDict._initialize_mapping then raises a bare
   "IndexError: index 1 is out of bounds for sequence of length 1" with
   no context about which file, which step, or what the actual problem is.
-  This task adds validation, a dedicated exception type, and step-context
-  in the CLI error handler so users get actionable error messages.
+  This task adds a DictionaryStructureError exception carrying file path,
+  column-count expectation/actuals, and a separator-mismatch hint; adds
+  validation at the CSVWorker.get_dictionary boundary (primary, owns
+  dict_path) and in MappingDict._initialize_mapping (defense-in-depth,
+  optional dict_path param); guards build_match_query against out-of-range
+  column index; threads dict_path from run_report. No changes to app.py —
+  the rich __str__ flows through the existing catch-all handler.
 
 goals:
   - Add DictionaryStructureError to errors.py
-  - Validate dictionary column count in MappingDict._initialize_mapping
-  - Validate dictionary in CSVWorker.get_dictionary before returning
+  - Validate dictionary column count in CSVWorker.get_dictionary (primary guard, has dict_path)
+  - Validate dictionary column count in MappingDict._initialize_mapping (defense-in-depth)
   - Guard build_match_query against out-of-range column index
-  - Enrich app.py run() error handler with step name and file path
-  - Add unit tests for all new validation paths
+  - Thread dict_path from run_report to MappingDict
   - All existing tests still pass
+  - New unit + integration tests for each validation path
 
 files:
   - path: src/mko_data_cleaner/core/errors.py
@@ -36,6 +47,10 @@ files:
 
   - path: src/mko_data_cleaner/core/dict_service.py
     targets:
+      - type: class
+        name: MappingDict
+      - type: method
+        name: __init__
       - type: method
         name: _initialize_mapping
       - type: method
@@ -43,17 +58,23 @@ files:
 
   - path: src/mko_data_cleaner/core/csv_service.py
     targets:
+      - type: class
+        name: CSVWorker
       - type: method
         name: get_dictionary
       - type: method
-        name: __init__
+        name: _validate_dictionary_columns
 
-  - path: src/mko_data_cleaner/app.py
+  - path: src/mko_data_cleaner/core/app_service.py
     targets:
-      - type: function
-        name: run
+      - type: method
+        name: run_report
 
-tests:
+  - path: tests/conftest.py
+    targets:
+      - type: fixture
+        name: separator_mismatch_report
+
   - path: tests/test_dict_service.py
   - path: tests/test_csv_service.py
   - path: tests/test_app.py
@@ -63,13 +84,16 @@ changes:
   - action: add_error_type
     file: src/mko_data_cleaner/core/errors.py
     description: >
-      Add DictionaryStructureError exception that carries file_path,
-      expected_min_columns, actual_columns, and a remediation hint.
-
+      Add DictionaryStructureError(Exception) with fields file_path,
+      expected_min_columns, actual_columns, hint, step. __str__ produces a
+      multi-line message: title, File, Step, column-count issue, Actual columns,
+      Hint. Follows the SettingsNotInitializedError pattern (custom __init__
+      with super().__init__ of the formatted string).
     code_hint: |
       class DictionaryStructureError(Exception):
-          """Raised when the dictionary DataFrame doesn't match the
-          col_indexes configuration (wrong separator, too few columns, etc.)."""
+          """Raised when the dictionary DataFrame structure doesn't match the
+          col_indexes configuration (e.g. wrong CSV separator, too few columns,
+          or a search index pointing beyond available data columns)."""
 
           def __init__(
               self,
@@ -77,60 +101,35 @@ changes:
               expected_min_columns: int = 0,
               actual_columns: list[str] | None = None,
               hint: str | None = None,
+              step: str | None = None,
           ):
               self.file_path = file_path
               self.expected_min_columns = expected_min_columns
               self.actual_columns = actual_columns or []
-              parts = []
+              self.hint = hint
+              self.step = step
+              parts = ["Dictionary structure validation failed"]
               if file_path:
                   parts.append(f"File: {file_path}")
+              if step:
+                  parts.append(f"Step: {step}")
               parts.append(
                   f"Dictionary has {len(self.actual_columns)} column(s) but "
-                  f"col_indexes references column index "
-                  f"{expected_min_columns - 1} (needs at least "
-                  f"{expected_min_columns} columns)."
+                  f"col_indexes references column index {expected_min_columns - 1} "
+                  f"(needs at least {expected_min_columns} columns)."
               )
               if self.actual_columns:
                   parts.append(f"Actual columns: {', '.join(self.actual_columns)}")
               if hint:
                   parts.append(f"Hint: {hint}")
-              super().__init__(" | ".join(parts))
+              super().__init__("\n  ".join(parts))
 
-          __all__ = ["DictionaryStructureError"]  # appended to existing exports
-
-  - action: validate_dictionary_columns
+  - action: add_dict_path_to_mapping_dict
     file: src/mko_data_cleaner/core/dict_service.py
     description: >
-      In _initialize_mapping, before selecting columns by index, validate
-      that self.data has enough columns for all action_col_indexes values.
-      Raise DictionaryStructureError with a separator-mismatch hint when
-      the frame has exactly 1 column (the signature of a wrong separator).
-      Also guard the col_index extraction with the same validation.
-
-    code_hint: |
-      # In _initialize_mapping, before action_idx extraction:
-      max_idx = max(self.action_col_indexes.values())
-      if self.data.width <= max_idx:
-          hint = None
-          if self.data.width == 1:
-              hint = (
-                  "The dictionary was read as a single column — the CSV "
-                  "separator in read_settings.from_csv.separator may not match "
-                  "the dictionary file's actual separator."
-              )
-          raise DictionaryStructureError(
-              file_path=None,  # set by caller or via MappingDict context
-              expected_min_columns=max_idx + 1,
-              actual_columns=self.data.columns,
-              hint=hint,
-          )
-
-  - action: add_dictionary_file_path_context
-    file: src/mko_data_cleaner/core/dict_service.py
-    description: >
-      Store the dict_path on MappingDict so DictionaryStructureError can
-      include the file path. Accept dict_path as an optional __init__ param.
-
+      Add optional dict_path: Path | None = None parameter to MappingDict.__init__
+      (after action_col_indexes). Store as self._dict_path before
+      _initialize_mapping() is called. Import DictionaryStructureError and Path.
     code_hint: |
       def __init__(
           self,
@@ -138,16 +137,70 @@ changes:
           action_col_indexes: DictColumnsIndexes,
           dict_path: Path | None = None,
       ):
+          self.data = data
           self._dict_path = dict_path
           ...
+          self._initialize_mapping()
 
-  - action: validate_in_csv_worker
+  - action: validate_columns_in_initialize_mapping
+    file: src/mko_data_cleaner/core/dict_service.py
+    description: >
+      In _initialize_mapping, after computing action_idx, check that
+      self.data.width > max(action_idx). If not, raise DictionaryStructureError
+      with self._dict_path, expected_min_columns=max_idx+1,
+      actual_columns=self.data.columns, step='building mapping rules'.
+      When width==1, add separator-mismatch hint.
+    code_hint: |
+      action_idx = list(self.action_col_indexes.values())
+      max_idx = max(action_idx)
+      if self.data.width <= max_idx:
+          hint = None
+          if self.data.width == 1:
+              hint = (
+                  "The dictionary was read as a single column — the CSV separator "
+                  "in 'read_settings.from_csv.separator' may not match the "
+                  "dictionary file's actual separator."
+              )
+          raise DictionaryStructureError(
+              file_path=self._dict_path,
+              expected_min_columns=max_idx + 1,
+              actual_columns=self.data.columns,
+              hint=hint,
+              step="building mapping rules",
+          )
+
+  - action: guard_build_match_query
+    file: src/mko_data_cleaner/core/dict_service.py
+    description: >
+      In build_match_query, before columns_list[col_idx], check col_idx bounds
+      (0 <= col_idx < len(columns_list)). If out of range, raise
+      DictionaryStructureError with self._dict_path, expected_min_columns=col_idx+1,
+      actual_columns=columns_list, step='building match query', and a hint about
+      the data-column / search-index mismatch.
+    code_hint: |
+      if col_idx < 0 or col_idx >= len(columns_list):
+          raise DictionaryStructureError(
+              file_path=self._dict_path,
+              expected_min_columns=col_idx + 1,
+              actual_columns=columns_list,
+              hint=(
+                  f"Dictionary references data column index {col_idx} but the "
+                  f"data table only has {len(columns_list)} columns. Check that "
+                  "the 'search' values in the dictionary match your data file's "
+                  "column layout."
+              ),
+              step="building match query",
+          )
+
+  - action: validate_dictionary_in_get_dictionary
     file: src/mko_data_cleaner/core/csv_service.py
     description: >
-      In get_dictionary, after reading the DataFrame, validate that it has
-      at least max(col_indexes.values()) + 1 columns. If not, raise
-      DictionaryStructureError with the dict_path and a separator hint.
-
+      In get_dictionary, after pl.read_csv, call self._validate_dictionary_columns(df).
+      Add _validate_dictionary_columns method: read col_indexes from
+      self.dict_settings (guard empty), compute max_idx, if df.width <= max_idx
+      raise DictionaryStructureError with self.dict_path, step='reading dictionary'.
+      When width==1, include configured separator in the hint. Import
+      DictionaryStructureError.
     code_hint: |
       def get_dictionary(self) -> pl.DataFrame:
           if not self.dict_path.is_file():
@@ -157,102 +210,85 @@ changes:
           return df
 
       def _validate_dictionary_columns(self, df: pl.DataFrame) -> None:
-          col_indexes = self.dict_settings.get("col_indexes", {})
+          col_indexes = self.dict_settings.get("col_indexes")
           if not col_indexes:
               return
           max_idx = max(col_indexes.values())
           if df.width <= max_idx:
               hint = None
               if df.width == 1:
+                  configured_sep = self.reader_settings.get("separator", "None")
                   hint = (
-                      "read_settings.from_csv.separator does not match the "
-                      "dictionary file separator."
+                      f"The dictionary was read as a single column — the CSV "
+                      f"separator in 'read_settings.from_csv.separator' "
+                      f"('{configured_sep}') may not match the dictionary file's "
+                      f"actual separator."
                   )
               raise DictionaryStructureError(
                   file_path=self.dict_path,
                   expected_min_columns=max_idx + 1,
                   actual_columns=df.columns,
                   hint=hint,
+                  step="reading dictionary",
               )
 
-  - action: guard_build_match_query
-    file: src/mko_data_cleaner/core/dict_service.py
-    description: >
-      In build_match_query, guard columns_list[col_idx] with a bounds check
-      that raises a descriptive DictionaryStructureError when the dictionary
-      references a data-column index that doesn't exist in the table.
-
-    code_hint: |
-      for col_idx, value in zip(indexes, filters, strict=True):
-          if col_idx >= len(columns_list):
-              raise DictionaryStructureError(
-                  expected_min_columns=col_idx + 1,
-                  actual_columns=columns_list,
-                  hint=(
-                      f"Dictionary references data column index {col_idx} "
-                      f"but the data table only has {len(columns_list)} columns. "
-                      "Check that col_indexes search values match your data file."
-                  ),
-              )
-          col_name = columns_list[col_idx]
-
-  - action: enrich_cli_error_handler
-    file: src/mko_data_cleaner/app.py
-    description: >
-      In the run() command's except block, include the pipeline step context
-      and the file path when available. Keep the current behavior of printing
-      the error message and exiting 1, but add context headers.
-
-    code_hint: |
-      except Exception as e:
-          # Augment with step context where available
-          step = getattr(e, '_pipeline_step', None)
-          extra = f" ({step})" if step else ""
-          console.print(f"[red]❌ Ошибка{extra}:[/red] {e}")
-          raise typer.Exit(1) from e
-
-  - action: add_step_context_to_dict_errors
+  - action: thread_dict_path_in_run_report
     file: src/mko_data_cleaner/core/app_service.py
     description: >
-      When constructing MappingDict in run_report, catch DictionaryStructureError
-      and re-raise with _pipeline_step attribute set to "dictionary initialization"
-      so the CLI handler can display the step. Also pass dict_path to MappingDict.
+      In run_report, pass dict_path=self.dict_path to the MappingDict constructor
+      so DictionaryStructureError messages from _initialize_mapping include the file path.
 
-    code_hint: |
-      try:
-          mapping_dict = MappingDict(
-              data=df,
-              action_col_indexes=self.app_config.dict_file_settings.col_indexes,
-              dict_path=self.dict_path,
-          )
-      except DictionaryStructureError as e:
-          if not e.file_path and self.dict_path:
-              # augment file_path on the exception
-              object.__setattr__(e, 'file_path', self.dict_path)
-          e._pipeline_step = "dictionary initialization"  # type: ignore[attr-defined]
-          raise
+  - action: add_test_mapping_dict_structure_error
+    file: tests/test_dict_service.py
+    description: >
+      Unit test: MappingDict with a 1-column DataFrame raises DictionaryStructureError
+      (not IndexError); message contains the dict_path and 'separator' hint.
+
+  - action: add_test_build_match_query_out_of_range
+    file: tests/test_dict_service.py
+    description: >
+      Unit test: build_match_query with an out-of-range col_idx raises
+      DictionaryStructureError with a descriptive message mentioning the mismatch.
+
+  - action: add_test_get_dictionary_separator_mismatch
+    file: tests/test_csv_service.py
+    description: >
+      Unit test: CSVWorker.get_dictionary on a comma-separated dict with ';' config
+      raises DictionaryStructureError mentioning the file and separator.
+
+  - action: add_separator_mismatch_fixture_and_integration_test
+    file: tests/conftest.py
+    description: >
+      Add separator_mismatch_report fixture: a report dir with a comma-separated
+      merged_dictionary.csv and a minimal ';'-separated raw_data .csv.gz (matching
+      the shipped config).
+    file2: tests/test_app.py
+    description2: >
+      Integration test: process_data on separator_mismatch_report raises
+      DictionaryStructureError whose message contains 'merged_dictionary.csv'
+      and 'separator'. CLI smoke test: runner.invoke run → exit_code 1 and
+      output contains the dictionary file path and separator hint.
 
 acceptance_criteria:
-  - DictionaryStructureError is defined in errors.py with file_path, expected_min_columns, actual_columns, and hint fields
-  - MappingDict._initialize_mapping raises DictionaryStructureError (not bare IndexError) when data has fewer columns than col_indexes requires
-  - CSVWorker.get_dictionary raises DictionaryStructureError when the loaded DataFrame has fewer columns than col_indexes requires
-  - build_match_query raises DictionaryStructureError with a clear message when col_idx is out of range
+  - DictionaryStructureError is defined in errors.py with file_path, expected_min_columns,
+    actual_columns, hint, and step fields
+  - MappingDict._initialize_mapping raises DictionaryStructureError (not bare IndexError)
+    when data has fewer columns than col_indexes requires
+  - CSVWorker.get_dictionary raises DictionaryStructureError when the loaded DataFrame
+    has fewer columns than col_indexes requires
+  - build_match_query raises DictionaryStructureError with a clear message when col_idx
+    is out of range
   - When the dictionary has exactly 1 column, the error hint mentions the separator mismatch
-  - The CLI "run" command still catches the exception and prints ❌ Ошибка, but the message now includes the dictionary file path and the separator hint
-  - process_data on the .ai/tmp/gac sample raises a catchable exception with "merged_dictionary.csv" and "separator" in the message
+  - process_data on a comma-separated-dict report raises DictionaryStructureError
+    mentioning merged_dictionary.csv and separator
+  - CLI "run" prints '❌ Ошибка' with the dictionary file path and separator hint
   - All existing tests pass (uv run pytest)
   - New unit tests added for each validation path
-  - uv run ruff check src/ tests/ passes
-  - uv run basedpyright src/ passes (no type errors in modified code)
+  - uv run ruff check src/ tests/ is clean
+  - uv run basedpyright src/ reports no new type errors in modified code
 
-verification_plan:
-  - Run: uv run pytest tests/test_dict_service.py tests/test_csv_service.py tests/test_app.py -v
-  - Run: uv run ruff check src/ tests/
-  - Run: uv run basedpyright src/
-  - Reproduce: process_data on .ai/tmp/gac report should now raise a clear error mentioning the dictionary file path and separator mismatch
-
-out_of_scope:
-  - Auto-detecting and fixing the separator
-  - Changing the dictionary or data file format
-  - Changing i18n (Russian vs English messages) beyond what's needed for the new error type
-  - Adding FTS or other rule-engine functionality
+verification:
+  - uv run pytest tests/test_dict_service.py tests/test_csv_service.py tests/test_app.py -v
+  - uv run pytest tests/ -v
+  - uv run ruff check src/ tests/
+  - uv run basedpyright src/
