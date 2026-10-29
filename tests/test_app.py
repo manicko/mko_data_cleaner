@@ -1,5 +1,6 @@
 """Tests for the app-level public API (B1/T1 + B4/T4)."""
 
+import gzip
 import shutil
 import subprocess
 import sys
@@ -7,15 +8,18 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import json5
 import polars as pl
 import pytest
+import typer
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from mko_data_cleaner.app import app, initialize_settings, process_data
-from mko_data_cleaner.core.app_service import get_app_service
+from mko_data_cleaner.core.app_service import AppService, get_app_service
 from mko_data_cleaner.core.errors import (
     DictionaryStructureError,
+    ExportFolderConflictError,
     SettingsNotInitializedError,
 )
 from mko_data_cleaner.core.models import DataFileExtension, ReportResult
@@ -310,7 +314,9 @@ def test_process_data_returns_report_result(
     fake_service.run_report.return_value = fake_result
     monkeypatch.setattr(
         "mko_data_cleaner.app.get_app_service",
-        lambda settings_dir=None, dict_path=None, clear_export_folder=None, force=None: fake_service,
+        lambda settings_dir=None, dict_path=None, clear_export_folder=None, force=None: (
+            fake_service
+        ),
     )
     result = process_data(empty_report_dir, settings_dir=populated_settings)
     assert isinstance(result, ReportResult)
@@ -690,3 +696,390 @@ def test_process_data_replace_rules_without_extra_cols(
     ]
     assert "Brand2" not in all_cells  # DELETE rule applied
     assert all_cells.count("Brand1") == 2  # Brand1 rows survived
+
+
+# --------------------------------------------------------------------------- #
+# BLOCK 3 (T8): Export folder cleanup — truth table, override precedence,
+#               interactive prompts, CLI flags, and pattern variations.
+#
+# Tests are grouped by concern (G1–G6) per the execution plan. All tests use
+# the canonical ``populated_settings`` fixture (shipped ``app_config.json5``
+# template with defaults clear_export_folder=false, force=false) and either the
+# ``synthetic_report`` fixture (3 rows → 2 clean) or a hand-built report with a
+# stale export file in ``clean_data/``.
+# --------------------------------------------------------------------------- #
+
+# --- Helper functions ---
+
+
+def _create_stale_export_file(
+    export_dir: Path,
+    table_name: str = "data_table",
+    suffix: str = ".csv.gz",
+) -> Path:
+    """Create a stale export file matching the tool's output pattern.
+
+    The tool's output file naming convention is::
+
+        <table_name>_<YYYYMMDD-HHMMSS>_<N><export_suffix>
+
+    e.g. ``data_table_20240101-120000_1.csv.gz``.  The file is detected by the
+    ``*<export_suffix>`` glob and deleted by the ``<table_name>_*<export_suffix>``
+    clear pattern in ``_handle_export_folder``.
+    """
+    export_dir.mkdir(parents=True, exist_ok=True)
+    stale_file = export_dir / f"{table_name}_20240101-120000_1{suffix}"
+    stale_file.write_bytes(b"stale export data")
+    return stale_file
+
+
+def _set_config_keys(settings_dir: Path, **keys) -> None:
+    """Set top-level keys in ``app_config.json5``.
+
+    Example::
+
+        _set_config_keys(populated_settings, clear_export_folder=True)
+    """
+    config_path = settings_dir / "settings" / "app_config.json5"
+    config = json5.loads(config_path.read_text("utf-8"))
+    for key, value in keys.items():
+        config[key] = value
+    config_path.write_text(json5.dumps(config, indent=2), encoding="utf-8")
+
+
+def _set_config_nested(settings_dir: Path, section: str, key: str, value) -> None:
+    """Set a nested key inside a top-level config section.
+
+    Example::
+
+        _set_config_nested(populated_settings, "database_settings", "table_name", "my_table")
+    """
+    config_path = settings_dir / "settings" / "app_config.json5"
+    config = json5.loads(config_path.read_text("utf-8"))
+    config[section][key] = value
+    config_path.write_text(json5.dumps(config, indent=2), encoding="utf-8")
+
+
+def _make_report(
+    report_dir: Path,
+    table_name: str = "data_table",
+    compression: str = "gzip",
+) -> Path:
+    """Create a minimal synthetic report dir with raw_data and dict.
+
+    Mirrors the ``synthetic_report`` fixture in conftest.py but allows specifying
+    a custom table_name and compression for variation tests.
+    """
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+        "id3;2024-02-01;2024;02;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+# --- G1: Non-interactive four-scenario truth table (via process_data) ---
+# CliRunner / pytest captured stdout → sys.stdout.isatty() == False →
+# non-interactive path in _is_interactive().
+
+
+def test_export_folder_scenario_1_noninteractive_aborts(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Scenario 1: clear=F, force=F, non-interactive stale files → abort."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    with pytest.raises(ExportFolderConflictError, match="non-interactive|cancelled"):
+        process_data(synthetic_report, settings_dir=populated_settings)
+    assert stale.exists()  # not cleared on abort
+
+
+def test_export_folder_scenario_2_clears_noninteractive(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Scenario 2: clear=T, force=F, non-interactive → clears stale + proceeds."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    result = process_data(
+        synthetic_report, settings_dir=populated_settings, clear_export_folder=True
+    )
+    assert not stale.exists()
+    assert result.rows_exported == 2
+
+
+def test_export_folder_scenario_3_force_proceeds_without_clear(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Scenario 3: clear=F, force=T, non-interactive → no clear, proceeds."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    result = process_data(synthetic_report, settings_dir=populated_settings, force=True)
+    assert stale.exists()  # not cleared
+    assert result.rows_exported == 2
+
+
+def test_export_folder_scenario_4_clears_with_force(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Scenario 4: clear=T, force=T, non-interactive → clears + proceeds."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    result = process_data(
+        synthetic_report,
+        settings_dir=populated_settings,
+        clear_export_folder=True,
+        force=True,
+    )
+    assert not stale.exists()
+    assert result.rows_exported == 2
+
+
+# --- G2: Empty/missing folder ---
+
+
+def test_export_folder_missing_or_empty_proceeds(
+    populated_settings: Path, synthetic_report: Path, tmp_path: Path
+):
+    """Missing or empty clean_data dir → proceeds normally (no abort).
+
+    Case 1 (missing): synthetic_report does not create clean_data/ →
+    ensure_dir() creates it, _handle_export_folder sees empty dir → return.
+
+    Case 2 (empty): pre-create clean_data/ with no files →
+    _handle_export_folder sees empty dir → return.
+    """
+    # Case 1: clean_data does not exist
+    report_missing = synthetic_report
+    assert not (report_missing / "clean_data").exists()
+    result1 = process_data(report_missing, settings_dir=populated_settings)
+    assert isinstance(result1, ReportResult)
+    assert result1.rows_exported == 2
+
+    # Case 2: clean_data exists but is empty
+    report_empty = _make_report(tmp_path / "report_empty")
+    (report_empty / "clean_data").mkdir(parents=True)
+    assert not any((report_empty / "clean_data").iterdir())
+    result2 = process_data(report_empty, settings_dir=populated_settings)
+    assert isinstance(result2, ReportResult)
+    assert result2.rows_exported == 2
+
+
+# --- G3: Override precedence (None → config, explicit → override) ---
+
+
+def test_config_clear_export_folder_applied_when_no_override(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Config clear_export_folder=true with no override → clears stale (scenario 2)."""
+    _set_config_keys(populated_settings, clear_export_folder=True)
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    result = process_data(synthetic_report, settings_dir=populated_settings)
+    assert not stale.exists()
+    assert result.rows_exported == 2
+
+
+def test_override_false_takes_precedence_over_config_true(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Config clear=True, override clear_export_folder=False → does NOT clear.
+
+    Config has both flags set to True; the Python API explicitly passes
+    ``clear_export_folder=False``.  The override wins: effective clear=False,
+    force=True (from config) → scenario 3 → no clear, proceeds.
+    """
+    _set_config_keys(populated_settings, clear_export_folder=True, force=True)
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    result = process_data(
+        synthetic_report,
+        settings_dir=populated_settings,
+        clear_export_folder=False,
+    )
+    assert stale.exists()  # not cleared (override False takes precedence)
+    assert result.rows_exported == 2
+
+
+def test_config_force_applied_when_no_override(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Config force=true with no override → proceeds without clearing (scenario 3)."""
+    _set_config_keys(populated_settings, force=True)
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    result = process_data(synthetic_report, settings_dir=populated_settings)
+    assert stale.exists()  # not cleared
+    assert result.rows_exported == 2
+
+
+# --- G4: Interactive scenarios (monkeypatch _is_interactive + typer.confirm) ---
+
+
+def test_interactive_scenario_1_user_declines_aborts(
+    monkeypatch, populated_settings: Path, synthetic_report: Path
+):
+    """Scenario 1 interactive: clear=F, force=F, interactive, confirm→False → abort."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    monkeypatch.setattr(AppService, "_is_interactive", lambda self: True)
+    monkeypatch.setattr(typer, "confirm", lambda *a, **kw: False)
+    with pytest.raises(ExportFolderConflictError, match="cancelled"):
+        process_data(synthetic_report, settings_dir=populated_settings)
+    assert stale.exists()
+
+
+def test_interactive_scenario_1_user_accepts_proceeds_without_clearing(
+    monkeypatch, populated_settings: Path, synthetic_report: Path
+):
+    """Scenario 1 interactive: clear=F, force=F, interactive, confirm→True → proceed, no clear."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    monkeypatch.setattr(AppService, "_is_interactive", lambda self: True)
+    monkeypatch.setattr(typer, "confirm", lambda *a, **kw: True)
+    result = process_data(synthetic_report, settings_dir=populated_settings)
+    assert stale.exists()  # not cleared (scenario 1: proceed without clearing)
+    assert result.rows_exported == 2
+
+
+def test_interactive_scenario_2_user_accepts_clears(
+    monkeypatch, populated_settings: Path, synthetic_report: Path
+):
+    """Scenario 2 interactive: clear=T, force=F, interactive, confirm→True → clears + proceeds."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    monkeypatch.setattr(AppService, "_is_interactive", lambda self: True)
+    monkeypatch.setattr(typer, "confirm", lambda *a, **kw: True)
+    result = process_data(
+        synthetic_report, settings_dir=populated_settings, clear_export_folder=True
+    )
+    assert not stale.exists()  # cleared
+    assert result.rows_exported == 2
+
+
+# --- G5: CLI tests (CliRunner, non-interactive) ---
+
+
+def test_cli_clear_export_folder_force_clears_stale_files(
+    populated_settings: Path, synthetic_report: Path
+):
+    """CLI --clear-export-folder --force → clears stale files, exit 0."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            str(synthetic_report),
+            "--settings-dir",
+            str(populated_settings),
+            "--clear-export-folder",
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert not stale.exists()
+
+
+def test_cli_no_flags_aborts_with_stale_files(
+    populated_settings: Path, synthetic_report: Path
+):
+    """CLI no flags, stale files → exit 1, 'non-interactive' in output."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["run", str(synthetic_report), "--settings-dir", str(populated_settings)],
+    )
+    assert result.exit_code == 1
+    assert "non-interactive" in result.output.lower()
+    assert stale.exists()  # not cleared on abort
+
+
+def test_cli_force_proceeds_without_clearing(
+    populated_settings: Path, synthetic_report: Path
+):
+    """CLI --force only, stale files → proceeds, stale file remains (scenario 3)."""
+    stale = _create_stale_export_file(synthetic_report / "clean_data")
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            str(synthetic_report),
+            "--settings-dir",
+            str(populated_settings),
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert stale.exists()  # not cleared (scenario 3: proceed without clearing)
+
+
+# --- G6: Variations (table_name, compression, non-matching files) ---
+
+
+def test_clear_pattern_follows_custom_table_name(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Custom table_name: only <custom_table>_* cleared; data_table_* preserved."""
+    _set_config_nested(
+        populated_settings, "database_settings", "table_name", "my_table"
+    )
+    clean_dir = synthetic_report / "clean_data"
+    custom_stale = _create_stale_export_file(clean_dir, table_name="my_table")
+    default_stale = _create_stale_export_file(clean_dir, table_name="data_table")
+    result = process_data(
+        synthetic_report, settings_dir=populated_settings, clear_export_folder=True
+    )
+    assert not custom_stale.exists()  # cleared (matches my_table_*.csv.gz)
+    assert default_stale.exists()  # preserved (does not match my_table_*.csv.gz)
+    assert result.rows_exported == 2
+
+
+def test_suffix_detection_follows_compression_setting(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Compression=zstd: only .csv.zst files detected/cleared; .csv.gz ignored.
+
+    Uses 'zstd' instead of 'zip' because polars 2.x ``write_csv`` only supports
+    'uncompressed', 'gzip', and 'zstd' compression.  The suffix derivation via
+    ``CSVWorker.get_files_suffix`` is the aspect under test, not the compression
+    library.
+    """
+    config_path = populated_settings / "settings" / "app_config.json5"
+    config = json5.loads(config_path.read_text("utf-8"))
+    config["export_settings"]["to_csv"]["compression"] = "zstd"
+    config_path.write_text(json5.dumps(config, indent=2), encoding="utf-8")
+
+    clean_dir = synthetic_report / "clean_data"
+    stale_zst = _create_stale_export_file(clean_dir, suffix=".csv.zst")
+    stale_gz = _create_stale_export_file(clean_dir, suffix=".csv.gz")
+    result = process_data(
+        synthetic_report, settings_dir=populated_settings, clear_export_folder=True
+    )
+    assert not stale_zst.exists()  # cleared (matches *.csv.zst)
+    assert stale_gz.exists()  # not detected (does not match *.csv.zst)
+    assert result.rows_exported == 2
+
+
+def test_non_matching_files_dont_trigger_warning(
+    populated_settings: Path, synthetic_report: Path
+):
+    """Non-matching extension (.txt) → proceeds normally, file preserved.
+
+    Only ``<table_name>_*<export_suffix>`` files are detected and cleared.
+    Files with other extensions (e.g. ``.txt``) are invisible to the check.
+    """
+    clean_dir = synthetic_report / "clean_data"
+    clean_dir.mkdir(parents=True, exist_ok=True)
+    (clean_dir / "notes.txt").write_text("not an export file", encoding="utf-8")
+    result = process_data(synthetic_report, settings_dir=populated_settings)
+    assert result.rows_exported == 2
+    assert (clean_dir / "notes.txt").exists()  # non-matching file preserved
