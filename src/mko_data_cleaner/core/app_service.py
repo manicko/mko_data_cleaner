@@ -1,9 +1,12 @@
 import logging
 import logging.config
+import sys
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from time import perf_counter
+
+import typer
 
 import mko_data_cleaner.core.utils as utils
 from mko_data_cleaner.core.csv_service import CSVWorker
@@ -12,6 +15,7 @@ from mko_data_cleaner.core.dict_service import MappingDict
 from mko_data_cleaner.core.errors import (
     ConfigError,
     DataValidationError,
+    ExportFolderConflictError,
     SettingsNotInitializedError,
 )
 from mko_data_cleaner.core.models import (
@@ -57,9 +61,122 @@ class AppService:
         )
 
     def _resolved_force(self) -> bool:
-        return (
-            self._force if self._force is not None else self.app_config.force
+        return self._force if self._force is not None else self.app_config.force
+
+    def _is_interactive(self) -> bool:
+        """Check if running in an interactive terminal context.
+
+        Returns ``False`` when stdout is not a TTY (e.g. piped output, test
+        runners) or when running inside a Jupyter kernel (``ipykernel``).
+        See spec §5.5.
+        """
+        if "ipykernel" in sys.modules:
+            return False
+        return sys.stdout.isatty()
+
+    def _clear_export_files(self, table_name: str, export_suffix: str) -> int:
+        """Delete tool-output files from the export folder.
+
+        Only files matching ``<table_name>_*.<export_suffix>`` are deleted —
+        never all files, never files with a different prefix.
+        Returns the number of files deleted.
+        """
+        pattern = f"{table_name}_*{export_suffix}"
+        deleted = 0
+        for file_path in self.export_path.glob(pattern):
+            if file_path.is_file():
+                logger.info("Deleting old export file: %s", file_path)
+                file_path.unlink()
+                deleted += 1
+        return deleted
+
+    def _handle_export_folder(self) -> None:
+        """Inspect and optionally clean the export folder before processing.
+
+        Implements the four-scenario truth table from spec §5.2, governing
+        combinations of ``clear_export_folder`` and ``force`` with interactive
+        terminal detection.
+
+        Raises:
+            ExportFolderConflictError: When the run must be aborted — either
+                the user declined a confirmation prompt or the context is
+                non-interactive with no clear/force override set.
+        """
+        clear = self._resolved_clear_export_folder()
+        force = self._resolved_force()
+
+        # R9: missing or empty folder → proceed silently
+        if not self.export_path.exists() or not any(self.export_path.iterdir()):
+            return
+
+        # R5: derive suffix from compression setting via CSVWorker.get_files_suffix()
+        export_suffix = CSVWorker.get_files_suffix(
+            self.app_config.export_settings.to_csv.compression
         )
+
+        # R5: same-extension file detection (never hardcoded)
+        same_suffix_files = list(self.export_path.glob("*" + export_suffix))
+        if not same_suffix_files:
+            return
+
+        count = len(same_suffix_files)
+        table_name = self.app_config.database_settings.table_name  # R4
+        interactive = self._is_interactive()  # §5.5
+
+        if clear:
+            # Scenarios 2 & 4: clear_export_folder = true
+            logger.warning(
+                "The export folder contains %d file(s) matching the output "
+                "pattern. They will be deleted in accordance with the "
+                "`clear_export_folder` setting.",
+                count,
+            )
+            if not force and interactive:
+                # Scenario 2 (interactive): prompt for confirmation
+                if not typer.confirm(
+                    f"Delete {count} file(s) matching '{table_name}_*{export_suffix}'?",
+                    default=False,
+                ):
+                    raise ExportFolderConflictError("Processing cancelled by user.")
+            # Scenarios 2 (non-interactive), 4: clear + proceed (no prompt)
+            self._clear_export_files(table_name, export_suffix)
+        else:
+            # Scenarios 1 & 3: clear_export_folder = false
+            if force:
+                # Scenario 3: warn + proceed without clearing (no prompt)
+                logger.warning(
+                    "The export folder contains %d file(s) with the same "
+                    "output extension (%s, derived from compression setting). "
+                    "Processing will continue without clearing. This may lead "
+                    "to data duplication.",
+                    count,
+                    export_suffix,
+                )
+                return
+            if interactive:
+                # Scenario 1 (interactive): warn + prompt
+                logger.warning(
+                    "The export folder contains %d file(s) with the same "
+                    "output extension (%s, derived from compression setting). "
+                    "Processing will continue without clearing. This may lead "
+                    "to data duplication.",
+                    count,
+                    export_suffix,
+                )
+                if not typer.confirm(
+                    f"Proceed without clearing? {count} file(s) with "
+                    f"{export_suffix} extension may cause data duplication.",
+                    default=False,
+                ):
+                    raise ExportFolderConflictError("Processing cancelled by user.")
+                # Accept → proceed without clearing
+                return
+            # Scenario 1 (non-interactive): abort
+            raise ExportFolderConflictError(
+                "Cannot prompt in non-interactive context. Set "
+                "`clear_export_folder=true` or `force=true` in your config "
+                "to proceed."
+            )
 
     @cached_property
     def log_config(self) -> LoggingSettings:
@@ -150,6 +267,7 @@ class AppService:
             )
         self.resolver.ensure_file_parent(self.db_path)
         self.resolver.ensure_dir(self.export_path)
+        self._handle_export_folder()
 
         rows_loaded = 0
         rows_exported = 0
@@ -184,7 +302,6 @@ class AppService:
             index_column=self.app_config.data_file_settings.index_column,
             date_column=date_column,
         ) as db_worker:
-
             # setting and clearing up column names before import
             db_worker.set_data_tbl_columns(
                 *csv_worker.source_headers, extra_cols=mapping_dict.extra_col_names

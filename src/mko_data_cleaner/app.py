@@ -78,6 +78,16 @@ def run(
             "Relative paths resolve against the report directory.",
         ),
     ] = None,
+    clear_export_folder: bool | None = typer.Option(
+        None,
+        "--clear-export-folder/--no-clear-export-folder",
+        help="Delete existing export files matching the output pattern before processing.",
+    ),
+    force: bool | None = typer.Option(
+        None,
+        "--force/--no-force",
+        help="Skip interactive confirmation prompts.",
+    ),
 ):
     """Запустить выгрузку отчёта"""
     if verbose:
@@ -85,7 +95,12 @@ def run(
 
     # The service is created via the factory; SettingsNotInitializedError is
     # propagated when user settings are not initialized.
-    service = get_app_service(settings_dir, dict_path=dict_path)
+    service = get_app_service(
+        settings_dir,
+        dict_path=dict_path,
+        clear_export_folder=clear_export_folder,
+        force=force,
+    )
 
     try:
         result = service.run_report(report)
