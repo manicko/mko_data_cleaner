@@ -29,10 +29,10 @@ everything else is **[code-verified]** by reading the implementation.
 | Entry point | Location | Notes |
 |---|---|---|
 | CLI `mko-data-cleaner init [--force]` | [app.py `init`](../../src/mko_data_cleaner/app.py) | Copies settings templates into the per-user settings directory; reachable without prior settings since the import fix |
-| CLI `mko-data-cleaner run <report_dir> [-v] [--settings-dir DIR] [--dict-path FILE]` | [app.py `run`](../../src/mko_data_cleaner/app.py) | `<report_dir>` must exist (`typer` `exists=True`); `--dict-path FILE` overrides the dictionary file (relative path resolves against the report directory, absolute as-is; a missing file raises `FileNotFoundError`); any exception prints `❌ Ошибка: …` and exits with code 1 |
+| CLI `mko-data-cleaner run <report_dir> [-v] [--settings-dir DIR] [--dict-path FILE] [--clear-export-folder/--no-clear-export-folder] [--force/--no-force]` | [app.py `run`](../../src/mko_data_cleaner/app.py) | `<report_dir>` must exist (`typer` `exists=True`); `--dict-path FILE` overrides the dictionary file (relative path resolves against the report directory, absolute as-is; a missing file raises `FileNotFoundError`); `--clear-export-folder` deletes stale export files before processing; `--force` skips interactive confirmation prompts; both default to the config values; any exception prints `❌ Ошибка: …` and exits with code 1 |
 | CLI `mko-data-cleaner list-settings [--settings-dir DIR]` | [app.py `list_settings`](../../src/mko_data_cleaner/app.py) | Lists JSON5 files in the user settings directory; prints a hint if the directory does not exist (does not raise) |
-| Python `process_data(report_path, settings_dir=None, dict_path=None)` | [app.py](../../src/mko_data_cleaner/app.py) | Synchronous; raises `FileNotFoundError` if the path is not a directory or if a `dict_path` override file is missing; raises `SettingsNotInitializedError` if settings are missing |
-| Python `initialize_settings(force=False, settings_dir=None)` | [app.py](../../src/mko_data_cleaner/app.py) | **Known gap:** `settings_dir` is accepted but not forwarded to `init_project`; settings are always written to the default platformdirs location [runtime-verified] |
+| Python `process_data(report_path, settings_dir=None, dict_path=None, clear_export_folder=None, force=None)` | [app.py](../../src/mko_data_cleaner/app.py) | Synchronous; raises `FileNotFoundError` if the path is not a directory or if a `dict_path` override file is missing; raises `SettingsNotInitializedError` if settings are missing; `clear_export_folder`/`force` override the config values (see [Export Folder Cleanup](#export-folder-cleanup)) |
+| Python `initialize_settings(force=False, settings_dir=None)` | [app.py `initialize_settings`](../../src/mko_data_cleaner/app.py) | Initializes user settings by copying the packaged JSON5 templates; `settings_dir` overrides the user settings directory (forwarded to `init_service.init_project`); `force` overwrites existing files |
 | Console script | [pyproject.toml `[project.scripts]`](../../pyproject.toml) | `mko-data-cleaner = "mko_data_cleaner.app:app"` |
 
 Network access, databases and external services are not involved: the only
@@ -76,7 +76,7 @@ Default layout (all paths relative to the report directory; configured in
 ├── raw_data/                    # import_folder — one or more .csv or .gz exports
 ├── dict/merged_dictionary.csv   # dict_file — the rules dictionary
 ├── data_base/db_example.db      # db_file — temporary, DELETED after the run
-├── clean_data/                  # export_folder — created if missing; output
+├── clean_data/                  # export_folder — created if missing; pre-run cleanup governed by `clear_export_folder` / `force` (see [Export Folder Cleanup](#export-folder-cleanup))
 └── null_data_<timestamp>_N.csv.gz  # written at the report root
 ```
 
@@ -307,6 +307,8 @@ interface) — it only selects which dictionary file is read and is threaded via
 | Dictionary column entirely empty | Column dropped (not exported) | [`_drop_empty_columns`](../../src/mko_data_cleaner/core/dict_service.py) [runtime-verified] |
 | Empty non-mapped set | No `null_data` file written | [`export_sql_to_csv` early return](../../src/mko_data_cleaner/core/csv_service.py) [runtime-verified] |
 | Unexpected exception during `run_report` | Propagates out of the `with DBWorker(...)` block; `close()` still runs (context manager) and deletes the DB | [db_service.py `__exit__`](../../src/mko_data_cleaner/core/db_service.py) |
+| Stale export files with no `clear_export_folder`/`force` in a non-interactive context | `ExportFolderConflictError` (catchable); CLI prints `❌ Ошибка: …` and exits 1; remediation hint included in the message | [`_handle_export_folder`](../../src/mko_data_cleaner/core/app_service.py) |
+| User declines an interactive confirmation prompt for the export folder | `ExportFolderConflictError` (catchable); CLI prints `❌ Ошибка: …` and exits 1 | [`_handle_export_folder`](../../src/mko_data_cleaner/core/app_service.py) |
 
 ## Configuration That Affects Behavior
 
@@ -325,11 +327,54 @@ interface) — it only selects which dictionary file is read and is threaded via
 | `database_settings.table_name` | Data table name (`data_table`) |
 | `read_settings.from_csv.*` | Polars CSV reader options (separator `;`, decimal comma, …) |
 | `export_settings.to_csv.*` | Polars CSV writer options (chunk size, compression, …) |
+| `clear_export_folder` | Whether to delete existing export files matching `<table_name>_*<export_suffix>` before processing; default `false` |
+| `force` | Whether to skip interactive confirmation prompts during export-folder inspection; default `false` |
 
 `log_config.json5` configures the logging handlers/formatters and is applied by
 the factory at service construction. It still contains the unused `tests` and
 `telebot` logger entries (leftover from another project) — see
 [open-questions.md](open-questions.md) D-8.
+
+## Export Folder Cleanup
+
+Before processing, `run_report` inspects the export folder (`clean_data/`) for
+stale output files. Two flags — `clear_export_folder` (default `false`) and
+`force` (default `false`) — control the behavior. Both are configurable via
+three channels: the `app_config.json5` template (persistent defaults), the CLI
+(`--clear-export-folder`/`--no-clear-export-folder`, `--force`/`--no-force`),
+and the Python API (`process_data(..., clear_export_folder=None, force=None)`).
+A `None` value on the API/CLI falls back to the config value
+([`_handle_export_folder`](../../src/mko_data_cleaner/core/app_service.py)).
+
+**File selection.** A file is considered "stale" if its name ends with the
+export suffix derived from
+[`CSVWorker.get_files_suffix(export_settings.to_csv.compression)`](../../src/mko_data_cleaner/core/csv_service.py)
+— never hardcoded (currently `.csv.gz` for `gzip`). Only files matching
+`<table_name>_*<export_suffix>` (where `table_name` comes from
+`database_settings.table_name`) are deleted when clearing; other files in the
+export folder are left untouched.
+
+**Interactive detection.** A terminal is considered interactive when
+`sys.stdout.isatty()` is true **and** `'ipykernel'` is not in `sys.modules`
+(spec §5.5). In a non-interactive context (piped output, CI, tests, Jupyter
+kernels) prompts are never shown.
+
+**Truth table (spec §5.2):**
+
+| `clear_export_folder` | `force` | Interactive? | Stale files present? | Behavior |
+|---|---|---|---|---|
+| `false` | `false` | Yes | Yes | Warn; prompt "Proceed without clearing?"; accept → proceed without clearing, decline → `ExportFolderConflictError` |
+| `false` | `false` | No | Yes | **Abort** → `ExportFolderConflictError` with remediation message |
+| `false` | `true` | * | Yes | Warn (no prompt); proceed without clearing |
+| `true` | `false` | Yes | Yes | Warn; prompt "Delete N file(s)?"; accept → delete matching files + proceed, decline → `ExportFolderConflictError` |
+| `true` | `false` | No | Yes | Delete matching files (no prompt) + proceed |
+| `true` | `true` | * | Yes | Delete matching files (no prompt) + proceed |
+| * | * | * | No (empty/missing folder) | Proceed silently (R9) |
+
+**Error type:** `ExportFolderConflictError`
+([errors.py](../../src/mko_data_cleaner/core/errors.py)) is raised on abort
+or when the user declines a prompt. The CLI catches it like any other
+exception, prints `❌ Ошибка: …`, and exits with code 1.
 
 ## Investigation Limitations
 

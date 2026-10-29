@@ -78,6 +78,9 @@ settings_dir = initialize_settings()  # initialize_settings(settings_dir=Path(..
 result = process_data(r"data\mvideo", settings_dir=settings_dir)
 #    dict_path=Path(...) — опционально переопределяет путь к словарю правил
 #    (по умолчанию <report_dir>/dict/merged_dictionary.csv).
+#    clear_export_folder=True  — удалять старые файлы экспорта перед запуском.
+#    force=True                — пропускать интерактивные подтверждения.
+#    По умолчанию оба параметра берутся из app_config.json5.
 ```
 
 Параметр `settings_dir` (опциональный) есть и у `initialize_settings()`, и у
@@ -126,6 +129,11 @@ mko-data-cleaner list-settings --settings-dir C:\my\settings
 
 # переопределение пути к словарю правил (по умолчанию <report_dir>/dict/merged_dictionary.csv)
 mko-data-cleaner run --dict-path dict/merged_dictionary.csv path/to/your_report_folder
+
+# управление папкой экспорта (clean_data) перед запуском:
+#   --clear-export-folder  — удалить старые файлы экспорта
+#   --force                — пропустить интерактивные подтверждения
+mko-data-cleaner run --clear-export-folder --force path/to/your_report_folder
 ```
 
 Опция `--settings-dir DIRECTORY` есть у команд `init`, `run` и `list-settings`.

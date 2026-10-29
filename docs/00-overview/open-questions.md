@@ -68,7 +68,7 @@ OQ-1…OQ-4 raised by this investigation:
 | D-3 | README documented the removed `core.app_service.app_service` singleton | [README](../../README.md), [app_service.py](../../src/mko_data_cleaner/core/app_service.py) (singleton replaced by `get_app_service`) | `ImportError` for anyone following the README (D6 said README documents the migration) | **Resolved** — section removed; README now shows `process_data` |
 | D-4 | `_detect_date_column` docstring claims `DD/MM/YYYY`, `DD.MM.YYYY`, `DD-MM-YYYY` support; the implementation regex matches only `YYYY-MM-DD`-style values | [`_is_date_column` / `DATE_REGEX`](../../src/mko_data_cleaner/core/csv_service.py) | Day-first date columns are never auto-detected | Open (OQ-7) |
 | D-5 | User-facing run messages are Russian (`Обработка стартовала …`), while the project rule requires English for all user-visible strings; newer CLI messages are English | [app_service.py `run_report`](../../src/mko_data_cleaner/core/app_service.py), [app.py](../../src/mko_data_cleaner/app.py), [project rule 1 (English Only)](../../.kilo/rules/project.md) | Mixed-language UX; violates the house rule | Open (OQ-10) |
-| D-6 | `process_data` returns `None`; the owner-confirmed result object (paths + timings + row counts, D8) is not implemented; `initialize_settings(settings_dir=…)` ignores the parameter | [app.py](../../src/mko_data_cleaner/app.py) (NOTE comment); runtime-verified | A pipeline cannot depend on the run's outputs programmatically | Owner-confirmed target work (spec T4), not started |
+| D-6 | ~~`process_data` returns `None`; the owner-confirmed result object (paths + timings + row counts, D8) is not implemented; `initialize_settings(settings_dir=…)` ignores the parameter~~ | [app.py `process_data`](../../src/mko_data_cleaner/app.py), [app.py `initialize_settings`](../../src/mko_data_cleaner/app.py), [init_service.py `init_project`](../../src/mko_data_cleaner/core/init_service.py) | — | **Resolved** — `process_data` returns `ReportResult` (model in [models.py `ReportResult`](../../src/mko_data_cleaner/core/models.py); field table in [current-behavior.md](current-behavior.md)); `initialize_settings(settings_dir=…)` forwards to `init_project` (app.py:188 → init_service.py:30); confirmed by auditor and existing tests (`test_process_data_returns_report_result`) |
 | D-7 | ~~Undocumented collapsing~~ — per-key rule resolution is **intended design** | [update_index_from_data](../../src/mko_data_cleaner/core/db_service.py), [sync_with_data_table](../../src/mko_data_cleaner/core/db_service.py); runtime-verified and re-studied 2026-10-15 | Owner-confirmed (D15): rows are grouped by the unique key, rules are applied once per unique key (performance optimization), then results are joined back by the key. Now correctly described in [architecture.md](architecture.md) and [data-flow.md](data-flow.md) | **Resolved — intended behavior, now documented** |
 | D-8 | Metadata/hygiene bundle (detailed below) | [pyproject.toml](../../pyproject.toml), [LICENSE.txt](../../LICENSE.txt), [app.py:2](../../src/mko_data_cleaner/app.py), [log_config.json5](../../src/mko_data_cleaner/settings/log_config.json5) | Blocks trustworthy publishing; house-rule violations | Owner-confirmed target work (D4, R9) |
 | D-9 | The repository's example fixtures use an older dictionary format (`upd` action, term at index 3) that the current code does not accept as-is; `data/raw_data/example_data.csv` is a placeholder containing a sentence | [data/dict/example_dict.csv](../../data/dict/example_dict.csv), [data/raw_data/example_data.csv](../../data/raw_data/example_data.csv) | Misleading for new users; spec F12 records the 43 MB sample is also not the documented shape | Open (OQ-9) |
@@ -76,13 +76,10 @@ OQ-1…OQ-4 raised by this investigation:
 
 ### D-8 explained (metadata/hygiene items, one by one)
 
-1. **`rich` is imported but not declared as a dependency.** `app.py` executes
-   `from rich.console import Console`, but `rich` does not appear in
-   `[project].dependencies` ([pyproject.toml](../../pyproject.toml)). Today it
-   arrives *transitively* through `typer` (which depends on `rich`). If a
-   future `typer` release drops or renames that dependency, importing the
-   package breaks — a fragile, indirect coupling. Fix: declare `rich`
-   explicitly.
+1. ~~`rich` is imported but not declared as a dependency.~~ **Resolved** — `rich` is now explicitly declared. `app.py` executes
+   `from rich.console import Console`, and `rich>=13.0.0` is listed in
+   `[project].dependencies` ([pyproject.toml:28](../../pyproject.toml)). It no
+   longer relies on the transitive `typer` dependency.
 2. **License metadata contradicts the LICENSE file.** `pyproject.toml`
    declares the classifier `License :: OSI Approved :: MIT License`, while
    [LICENSE.txt](../../LICENSE.txt) contains the BSD-3-Clause text — and its

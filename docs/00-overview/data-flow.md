@@ -162,7 +162,7 @@ flowchart LR
 | `clean_data/data_table_*.csv.gz` | Analyst's downstream report/pipeline | The cleaned dataset: original columns + analyst columns |
 | `null_data_*.csv.gz` | The analyst (dictionary author) | Recognition gaps → dictionary improvement loop (README: "дообучение словаря") |
 | `log.log` + console logs | Operator | Progress, row counts, warnings |
-| `process_data` return value | Pipeline (target) | Currently `None`; owner-confirmed to become a result object with paths + timings + clean row counts (D8) |
+| `process_data` return value | Pipeline (target) | Returns `ReportResult` (model in [models.py `ReportResult`](../../src/mko_data_cleaner/core/models.py); field table in [current-behavior.md](current-behavior.md) and [README](../../README.md)) with output paths, timings, and row counts |
 
 ## Provenance and Preservation of Original Values
 
