@@ -138,6 +138,8 @@ def process_data(
     report_path: str | Path,
     settings_dir: Path | None = None,
     dict_path: Path | None = None,
+    clear_export_folder: bool | None = None,
+    force: bool | None = None,
 ) -> ReportResult:
     """
     Run the data-cleaning report for the given directory.
@@ -160,7 +162,12 @@ def process_data(
     path = Path(report_path)
     if not path.is_dir():
         raise FileNotFoundError(f"Directory not found: {path}")
-    return get_app_service(settings_dir, dict_path=dict_path).run_report(path)
+    return get_app_service(
+        settings_dir,
+        dict_path=dict_path,
+        clear_export_folder=clear_export_folder,
+        force=force,
+    ).run_report(path)
 
 
 def initialize_settings(force: bool = False, settings_dir: Path | None = None) -> Path:

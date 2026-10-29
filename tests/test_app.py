@@ -310,7 +310,7 @@ def test_process_data_returns_report_result(
     fake_service.run_report.return_value = fake_result
     monkeypatch.setattr(
         "mko_data_cleaner.app.get_app_service",
-        lambda settings_dir=None, dict_path=None: fake_service,
+        lambda settings_dir=None, dict_path=None, clear_export_folder=None, force=None: fake_service,
     )
     result = process_data(empty_report_dir, settings_dir=populated_settings)
     assert isinstance(result, ReportResult)

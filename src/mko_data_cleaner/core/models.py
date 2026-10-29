@@ -174,6 +174,8 @@ class DataSettings(BaseModel):
     database_settings: Database
     read_settings: ReadCSV
     export_settings: WriteCSV
+    clear_export_folder: bool = False
+    force: bool = False
 
 
 # --- Report Result

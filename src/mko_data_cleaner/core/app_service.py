@@ -38,12 +38,28 @@ class AppService:
         app_paths: AppPaths,
         resolver: PathResolver,
         dict_path: Path | None = None,
+        clear_export_folder: bool | None = None,
+        force: bool | None = None,
     ):
         self.app_paths = app_paths
         self.resolver = resolver
         self.prepare_log_paths()
         self._base_path = None
         self._dict_path = dict_path
+        self._clear_export_folder = clear_export_folder
+        self._force = force
+
+    def _resolved_clear_export_folder(self) -> bool:
+        return (
+            self._clear_export_folder
+            if self._clear_export_folder is not None
+            else self.app_config.clear_export_folder
+        )
+
+    def _resolved_force(self) -> bool:
+        return (
+            self._force if self._force is not None else self.app_config.force
+        )
 
     @cached_property
     def log_config(self) -> LoggingSettings:
@@ -344,7 +360,10 @@ def _require_settings(app_paths: AppPaths) -> None:
 
 
 def get_app_service(
-    settings_dir: Path | None = None, dict_path: Path | None = None
+    settings_dir: Path | None = None,
+    dict_path: Path | None = None,
+    clear_export_folder: bool | None = None,
+    force: bool | None = None,
 ) -> AppService:
     """Lazily construct :class:`AppService`, validating settings first.
 
@@ -360,6 +379,8 @@ def get_app_service(
         app_paths=app_paths,
         resolver=PathResolver(app_paths.user_dir),
         dict_path=dict_path,
+        clear_export_folder=clear_export_folder,
+        force=force,
     )
     logging.config.dictConfig(service.log_config.model_dump())
     return service

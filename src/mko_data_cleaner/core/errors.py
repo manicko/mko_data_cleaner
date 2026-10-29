@@ -90,3 +90,7 @@ class PyArrowInstallationError(RuntimeError):
 
     def __init__(self, message: str | None = None):
         super().__init__(message or self._MESSAGE)
+
+
+class ExportFolderConflictError(Exception):
+    """Raised when export folder cleanup is required but cannot proceed."""

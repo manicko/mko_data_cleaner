@@ -44,5 +44,7 @@
       "include_header": true,
       "compression": "gzip"
     }
-  }
+  },
+  "clear_export_folder": false,
+  "force": false
 }
