@@ -1,6 +1,7 @@
 """Tests for the app-level public API (B1/T1 + B4/T4)."""
 
 import gzip
+import logging
 import shutil
 import subprocess
 import sys
@@ -438,6 +439,69 @@ def test_process_data_end_to_end(populated_settings: Path, synthetic_report: Pat
     tag_values = merged["tag"].drop_nulls().to_list()
     assert len(tag_values) > 0
     assert "added_by_brand" in tag_values
+
+
+# ------------------------------------------------------------------- #
+# B4: missing index_column — warn and continue cleaning full dataset
+# ------------------------------------------------------------------- #
+def test_process_data_missing_index_column_warns_and_continues(
+    populated_settings: Path,
+    missing_index_column_report: Path,
+):
+    """When the configured ``index_column`` (e.g. ``AdId``) is absent from the
+    CSV data, ``process_data`` must log a WARNING, set ``index_column`` to
+    ``None``, and still clean/export the full dataset (no crash).
+    """
+    report_dir = missing_index_column_report
+
+    # Collect "app_service" log records. Attach the handler directly to that
+    # logger because process_data() reconfigures logging via dictConfig (which
+    # resets root handlers), so pytest's caplog cannot capture these records.
+    records: list[logging.LogRecord] = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    app_logger = logging.getLogger("app_service")
+    collector = _Collector(level=logging.DEBUG)
+    app_logger.addHandler(collector)
+    try:
+        result = process_data(report_dir, settings_dir=populated_settings)
+    finally:
+        app_logger.removeHandler(collector)
+
+    # process completed successfully and exported data without the melt step
+    assert isinstance(result, ReportResult)
+    assert result.rows_loaded == 3
+    assert result.rows_exported == 2  # Brand2 row deleted by dictionary rule
+    assert result.rows_exported <= result.rows_loaded
+    assert result.export_dir == report_dir / "clean_data"
+    assert (result.export_dir).exists()
+    assert len(list(result.export_dir.glob("*.gz"))) > 0
+
+    # the missing index column produced a warning
+    messages = [record.getMessage() for record in records]
+    assert any(
+        "Index column 'AdId' not found in data columns" in msg for msg in messages
+    ), messages
+    assert any(
+        "Proceeding without index/melt" in msg for msg in messages
+    ), messages
+
+    # the dictionary rules still applied: Brand2 deleted, Brand1 survived
+    export_files = sorted(result.export_dir.glob("*.csv.gz"))
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+
+    all_cells = [
+        str(v)
+        for col in merged.columns
+        for v in merged[col].to_list()
+        if v is not None
+    ]
+    assert "Brand2" not in all_cells  # DELETE rule applied without index table
+    assert all_cells.count("Brand1") == 2
 
 
 # ------------------------------------------------------------------- #

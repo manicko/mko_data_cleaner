@@ -898,3 +898,48 @@ def test_insert_matches_empty_search_columns_is_noop(db_worker, caplog):
 
     # temp mapping table dropped as cleanup
     assert not db_worker.tbl_exists("temp_tbl")
+
+
+def test_create_table_with_index_no_index_column(db_worker):
+    """create_table_with_index must not crash when index_column is None.
+
+    Regression: previously ``_create_index`` was called unconditionally with
+    ``index_column`` even when it was ``None``, raising
+    ``sqlite3.OperationalError: no such column`` for the configured index column.
+    """
+    db_worker.index_column = None
+    main_columns = ["researchDate", "YEAR", "programName", "brand"]
+    extra_columns = ["brand_normalized", "channel_group"]
+
+    db_worker.set_data_tbl_columns(*main_columns, extra_cols=extra_columns)
+    db_worker.search_columns = ["brand", "programName"]
+
+    db_worker.create_table_with_index()
+
+    # data table created with all configured columns
+    assert db_worker.tbl_exists(db_worker.data_tbl_name)
+    columns = db_worker.get_table_columns(db_worker.data_tbl_name)
+    assert "brand" in columns
+    assert len(columns) == len(main_columns) + len(extra_columns)
+
+    # no distinct/index table created when index_column is None
+    assert db_worker._index_tbl_name is None
+    assert not db_worker.tbl_exists(f"{db_worker.data_tbl_name}_distinct")
+
+
+def test_create_index_skips_none_columns(db_worker, mocker, caplog):
+    """_create_index is a no-op (debug log) when any column argument is None.
+
+    Defensive guard against any call site that passes a None column.
+    """
+    db_worker.create_table("test_idx_tbl", "col1", "col2")
+    spy = mocker.spy(db_worker, "perform_query")
+
+    with caplog.at_level(logging.DEBUG, logger="mko_data_cleaner.core.db_service"):
+        db_worker._create_index("test_idx_tbl", None)
+
+    # perform_query must not be invoked -> no SQL emitted
+    assert spy.call_count == 0
+    assert any(
+        "none column" in record.message.lower() for record in caplog.records
+    )

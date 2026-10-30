@@ -307,6 +307,20 @@ class AppService:
                 *csv_worker.source_headers, extra_cols=mapping_dict.extra_col_names
             )
 
+            # validate that a configured index_column exists in the data; if it
+            # does not, warn and proceed without an index/melt-by-column
+            if db_worker.index_column and db_worker.index_column not in (
+                db_worker.data_tbl_columns or []
+            ):
+                logger.warning(
+                    "Index column '%s' not found in data columns %s. "
+                    "Proceeding without index/melt — cleaning will apply to the "
+                    "full dataset.",
+                    db_worker.index_column,
+                    db_worker.data_tbl_columns,
+                )
+                db_worker.index_column = None
+
             # adjusting mapping in accordance with cleaned column names
             # prepare search patterns
             mapping_dict.build_mapping(

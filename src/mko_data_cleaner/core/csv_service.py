@@ -143,7 +143,7 @@ class CSVWorker:
                 if self._is_date_column(series, self.DATE_REGEX):
                     return column
             except pl.exceptions.ColumnNotFoundError:
-                logger.error(f"Date column {column} not found.")
+                logger.warning(f"Date column {column} not found.")
 
         for _, col in enumerate(df.columns):
             if self._is_date_column(df[col], self.DATE_REGEX):

@@ -128,6 +128,40 @@ def synthetic_report(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def missing_index_column_report(tmp_path: Path) -> Path:
+    """Report dir whose CSV data does NOT contain the configured ``AdId`` column.
+
+    Mirrors ``synthetic_report`` but replaces the leading ``AdId`` header with
+    ``recordId`` so that the configured ``index_column`` ("AdId") is absent from
+    the data. Used to verify the missing-index-column graceful-degradation path.
+    """
+    report_dir = tmp_path / "report"
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "recordId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+        "id3;2024-02-01;2024;02;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+@pytest.fixture
 def separator_mismatch_report(tmp_path: Path) -> Path:
     """Report dir whose merged_dictionary.csv uses ',' while config expects ';'.
 

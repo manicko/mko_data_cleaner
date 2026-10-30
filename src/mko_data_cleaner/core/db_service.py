@@ -382,6 +382,12 @@ class DBWorker:
             )
 
     def _create_index(self, table_name: str, *columns: str, unique_index: bool = False):
+        if any(col is None for col in columns):
+            logger.debug(
+                f"Skipping index creation on '{table_name}': "
+                f"None column detected in {columns}."
+            )
+            return
         unique = "UNIQUE" if unique_index else ""
         sql = f"""
             CREATE {unique} INDEX IF NOT EXISTS {table_name}_{"_".join(columns)}_index
@@ -395,8 +401,10 @@ class DBWorker:
         # create empty datatable
         self.create_table(self.data_tbl_name, *self.data_tbl_columns)
         self._create_index_table()
-        self._create_index(self.data_tbl_name, self.index_column)
-        self._create_index(self._index_tbl_name, self.index_column)
+        if self.index_column:
+            self._create_index(self.data_tbl_name, self.index_column)
+            if self._index_tbl_name:
+                self._create_index(self._index_tbl_name, self.index_column)
 
     def update_index_from_data(self):
         if self.index_column:
