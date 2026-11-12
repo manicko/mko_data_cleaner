@@ -42,8 +42,8 @@ def test_notebook_install_cell_uses_library_check():
     """The install cell delegates version checking to the library function.
 
     If the package is missing or too old (no check_notebook_environment), the
-    cell falls back to a %pip install with --force-reinstall. The version-check
-    logic itself lives in the library, not inline in the cell.
+    cell falls back to a %pip install --upgrade. The version-check logic itself
+    lives in the library, not inline in the cell.
     """
     nb = _load()
 
@@ -53,6 +53,7 @@ def test_notebook_install_cell_uses_library_check():
     assert "check_notebook_environment" in install_cell.source
     assert "importlib.metadata" not in install_cell.source  # delegated to library
     assert "ImportError" in install_cell.source  # fallback install path
+    assert "--no-deps" not in install_cell.source
 
     # v0.2.0 still appears as a PIN reference across code cells.
     joined = "\n".join(c.source for c in nb.cells if c.cell_type == "code")

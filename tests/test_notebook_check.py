@@ -11,16 +11,21 @@ def test_check_reports_up_to_date(monkeypatch, capfd):
     check_notebook_environment()
     captured = capfd.readouterr()
     assert "up to date" in captured.out
+    assert "--no-deps" not in captured.out
     assert "--force-reinstall" not in captured.out
+    assert "--upgrade" not in captured.out
 
 
 def test_check_warns_stale_version(monkeypatch, capfd):
-    """Installed version behind pin -> warning with force-reinstall command."""
+    """Installed version behind pin -> warning with upgrade install command."""
     monkeypatch.setattr("mko_data_cleaner.notebook.version", lambda pkg: "0.1.0")
     check_notebook_environment()
     captured = capfd.readouterr()
-    assert "--force-reinstall" in captured.out
+    assert "--upgrade" in captured.out
+    assert "--no-deps" not in captured.out
     assert "outdated" in captured.out
+    assert "github.com/manicko/mko_data_cleaner" in captured.out
+    assert "@v0.2.0" in captured.out
     assert "up to date" not in captured.out
 
 
@@ -34,7 +39,9 @@ def test_check_not_installed(monkeypatch, capfd):
     check_notebook_environment()
     captured = capfd.readouterr()
     assert "github.com/manicko/mko_data_cleaner" in captured.out
-    assert "--force-reinstall" in captured.out
+    assert "--upgrade" in captured.out
+    assert "@v0.2.0" in captured.out
+    assert "--no-deps" not in captured.out
 
 
 def test_check_respected_disable_env(monkeypatch, capfd):

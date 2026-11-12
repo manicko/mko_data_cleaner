@@ -12,11 +12,12 @@ referenced or required) and runs the full clean → map → export cycle.
 
 - Python >= 3.12 (developed and verified on Python 3.14 + uv 0.9.26).
 - The package itself. Choose one:
-  - From a **clean kernel**, the notebook's install cell installs the pinned
-    release tag:
-    `%pip install "git+https://github.com/manicko/mko_data_cleaner.git@v0.2.0"`
+  - From a **clean kernel**, the notebook's install cell installs/upgrades the
+    pinned release tag including dependencies:
+    `%pip install --upgrade "git+https://github.com/manicko/mko_data_cleaner.git@v0.2.0"`
     (the `v0.2.0` tag is cut in a later release step; until then use the local
-    install below).
+    install below). If packages are installed or upgraded inside a running
+    kernel, restart the kernel to pick up changes.
   - **Local dev install** (no network needed): from the repo root,
     `uv sync` installs the project (editable) plus notebook tooling
     (`nbformat`, `nbclient`, `ipykernel`) into the dev group — the notebook's
