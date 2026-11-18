@@ -152,16 +152,16 @@ mko-data-cleaner run --clear-export-folder --force path/to/your_report_folder
 
 ### 4. Пример ноутбука (Jupyter)
 
-Готовый runnable‑пример, демонстрирующий полный цикл
-`initialize_settings → process_data → ReportResult`:
-[`examples/notebooks/mko_data_cleaner_pipeline_example.ipynb`](examples/notebooks/mko_data_cleaner_pipeline_example.ipynb)
-(создаёт синтетический отчёт в‑cell и разбирает результат).
+Рабочий ноутбук для запуска обработки на локальных данных:
+[`examples/notebooks/02-clean_data.ipynb`](examples/notebooks/02-clean_data.ipynb).
+Он задаёт рабочие пути (`SETTINGS_WORKSPACE`, `REPORT_PATH`, `DICT_PATH`),
+проверяет наличие настроек/данных, итерирует поддиректории отчётов в `REPORT_PATH`
+и вызывает `process_data(..., settings_dir=..., dict_path=...)` для каждой.
 
-Установить pinned‑релиз (тег `v0.2.0`):
-
-```
-%pip install "git+https://github.com/manicko/mko_data_cleaner.git@v0.2.0"
-```
+Ноутбук не создаёт синтетические данные и не вызывает `initialize_settings()` —
+перед запуском подготовьте `settings/app_config.json5`, `settings/log_config.json5`,
+каталог отчётов и файл словаря, затем при необходимости скорректируйте пути в ячейке
+настройки. Подробности: [`examples/README.md`](examples/README.md).
 
 ---
 
