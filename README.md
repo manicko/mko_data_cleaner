@@ -14,7 +14,8 @@
 * Локальный SQLite как движок обработки
 * LIKE и полнотекстового (FTS5) поиска 
 * Пользовательские колонки (категории, бренды и т.д.)
-* Поддержка `.gz` 
+* Поддержка `.gz`
+* Опциональное глобальное удаление полных дубликатов строк (`--deduplicate`) до применения правил
 
 ## Архитектура
 
@@ -80,7 +81,8 @@ result = process_data(r"data\mvideo", settings_dir=settings_dir)
 #    (по умолчанию <report_dir>/dict/merged_dictionary.csv).
 #    clear_export_folder=True  — удалять старые файлы экспорта перед запуском.
 #    force=True                — пропускать интерактивные подтверждения.
-#    По умолчанию оба параметра берутся из app_config.json5.
+#    deduplicate=True          — удалять полные дубликаты строк до применения правил.
+#    По умолчанию эти параметры берутся из app_config.json5.
 ```
 
 Параметр `settings_dir` (опциональный) есть и у `initialize_settings()`, и у
@@ -107,6 +109,8 @@ result = process_data(r"data\mvideo", settings_dir=settings_dir)
 | `timings`         | Тайминги по стадиям: `{import, mapping, export}`, сек.                 |
 | `rows_loaded`     | Количество загруженных строк.                                           |
 | `rows_exported`   | Количество строк в экспорте.                                            |
+| `rows_removed_duplicates` | Количество удалённых строк-дубликатов (0, если дедупликация выключена). |
+| `rows_resulted`   | Строк после дедупликации: `rows_loaded − rows_removed_duplicates`.      |
 
 > **Важно:** `process_data()` загружает настройки лениво. Если `initialize_settings()`
 > не вызван (или `settings_dir` указывает в пустой каталог), выбрасывается
@@ -134,7 +138,18 @@ mko-data-cleaner run --dict-path dict/merged_dictionary.csv path/to/your_report_
 #   --clear-export-folder  — удалить старые файлы экспорта
 #   --force                — пропустить интерактивные подтверждения
 mko-data-cleaner run --clear-export-folder --force path/to/your_report_folder
+
+# удаление полных дубликатов строк до применения правил:
+#   --deduplicate          — включить дедупликацию (по умолчанию берётся из app_config.json5)
+mko-data-cleaner run --deduplicate path/to/your_report_folder
 ```
+
+> **De-duplication flag:** `--deduplicate` is a single tri-state flag on `run`.
+> When present, de-duplication is on; when absent, the `deduplicate` value from
+> `app_config.json5` applies. There is **no** `--no-deduplicate` counterpart
+> (Typer rejects `--no-deduplicate` with exit code 2). De-duplication removes
+> rows that are identical across all source columns before any cleaning rule,
+> globally across every file in `raw_data/`; raw files are never modified.
 
 Опция `--settings-dir DIRECTORY` есть у команд `init`, `run` и `list-settings`.
 Она переопределяет каталог пользовательских настроек: по умолчанию используется
@@ -244,10 +259,11 @@ YEAR;MONTH;ADVERTISERS;BRANDS;SUBBRANDS;ARTICLE LIST3;ARTICLE LIST4;ADID;MEDIA;C
 ## Что делает инструмент
 
 1. Загружает данные из поддиректории (`raw_data`), указанной в конфиге.
-2. Создаёт временную SQLite-базу с индексами и FTS5 (при необходимости).
-3. Применяет правила в порядке: **DELETE → REPLACE → ADD**.
-4. Сохраняет нераспознанные строки в `null_data_*.csv.gz`.
-5. Экспортирует данные с добавленными колонками в поддиректорию, указанную в конфиге (`clean_data`).
+2. Опционально удаляет полные дубликаты строк (одинаковые во всех колонках) до применения правил — глобально по всем файлам `raw_data/`, с сохранением первого вхождения; управляется настройкой `deduplicate`, флагом `--deduplicate` или параметром `process_data(deduplicate=...)`. Сырые файлы не изменяются.
+3. Создаёт временную SQLite-базу с индексами и FTS5 (при необходимости).
+4. Применяет правила в порядке: **DELETE → REPLACE → ADD**.
+5. Сохраняет нераспознанные строки в `null_data_*.csv.gz`.
+6. Экспортирует данные с добавленными колонками в поддиректорию, указанную в конфиге (`clean_data`).
 
 
 ### Нераспознанные данные

@@ -59,6 +59,29 @@ OQ-1…OQ-4 raised by this investigation:
 | D14 | `null_data` is dictionary-improvement feedback only. It is not a data-quality report, a warning, or an error signal | Owner: "только для словаря и не является какой-либо проверкой качества данных" | Confirmed; **documentation updated** |
 | D15 | Per-key rule resolution is intended design: rows are grouped by the unique key (`index_column`), rules are applied once per unique key, then extra columns and deletions are joined back to the main table by the key | Owner: explicit performance optimization ("позволяет значительно сократить количество операций") | Confirmed; **architecture re-described** |
 
+### De-duplication decisions D16–D27 (duplicate-rows-removal feature, 2026-11-20)
+
+Numbering continues the register above. These decisions come from the analytical
+specification
+[`08_duplicate_rows_removal_spec.md`](../../.ai/problems/08_duplicate_rows_removal_spec.md)
+§4 (product-owner interview of 2026-11-20) and are **implemented** in commits
+`2f76941`, `0f4e4f9`, `b039233`, `e2299eb`, `ff5b4e6`.
+
+| # | Decision | Rationale | Status |
+|---|---|---|---|
+| D16 | **CLI shape:** a single `--deduplicate` flag on the existing `run` command. There is **no** separate CLI command and **no** `--no-deduplicate` counterpart. This **supersedes** the "отдельная cli команда" wording in `P01.md`. | PO decision 2026-11-20: "just flag `--deduplicate`". Keeps one command surface and matches the existing `--force` pattern. | Confirmed; **implemented** |
+| D17 | **Stage:** de-duplication runs after raw load and **before** cleaning rules. | PO answer Q1=A. Cheapest point; identical raw rows necessarily receive identical rule results, so output is unchanged relative to post-rule dedup for exact duplicates. | Confirmed; **implemented** |
+| D18 | **Definition:** rows identical across **all** columns; no "keep-strategy" ambiguity because only fully identical rows are affected. | PO answers Q2=A, Q3 ("must be identical"). | Confirmed; **implemented** |
+| D19 | **Default:** `deduplicate: false`. | PO answer Q4=A. Silent row removal must be opt-in. | Confirmed; **implemented** |
+| D20 | **Configuration shape:** one top-level boolean (`DataSettings.deduplicate`), no nested section, no `StrEnum`. | PO answer Q5=A; a boolean is not a fixed value set (project rule 10 does not apply). | Confirmed; **implemented** |
+| D21 | **Global scope, non-destructive:** de-duplicate across all `raw_data/` files; never rewrite raw files. | PO answer Q8=A. | Confirmed; **implemented** |
+| D22 | **Mechanism:** Polars built-in `.unique()` with `keep="first"`, `maintain_order=True`. | PO answer Q9. Implemented as one global lazy plan over the sorted file list (`load_deduplicated`), not per chunk. | Confirmed; **implemented** |
+| D23 | **Metrics:** `rows_loaded` (raw, as today), `rows_removed_duplicates`, `rows_resulted = rows_loaded − rows_removed_duplicates`. | PO answer Q7. | Confirmed; **implemented** |
+| D24 | **Scale target:** hundreds of thousands to a few million rows per report. | PO answer Q10=B. | Confirmed (design target) |
+| D25 | **CLI feedback:** the existing summary line is preserved and, when de-duplication is active, a `… · N duplicate(s) removed` segment is appended. | PO answer Q7 requires visible feedback; appending preserves the existing `"3 loaded → 2 clean"` substring asserted by tests. | Confirmed; **implemented** |
+| D26 | **`timings` contract unchanged:** no new `timings` key; de-duplication time is included in `timings["import"]`. | Avoids churn on the asserted `{import, mapping, export}` key set; de-duplication is part of loading. | Confirmed (engineering); **implemented** |
+| D27 | **Determinism:** `CSVWorker.data_files` is sorted once at discovery, for both the de-duplication and the non-de-duplication path. | `Path.glob` order is filesystem-dependent; "first occurrence" must not be. | Confirmed (engineering); **implemented** |
+
 ## 2. Discrepancies and Gaps (current state vs. documentation/intent)
 
 | # | Discrepancy | Evidence | Impact on product | Status |

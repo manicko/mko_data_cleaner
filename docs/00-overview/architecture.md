@@ -154,12 +154,15 @@ Performance pragmas are tuned for bulk processing
 
 ## Public Interfaces vs. Internal Details
 
-- **Public, documented:** `process_data(report_path, settings_dir=None, dict_path=None, clear_export_folder=None, force=None)` and
+- **Public, documented:** `process_data(report_path, settings_dir=None, dict_path=None, clear_export_folder=None, force=None, deduplicate=None)` and
   `initialize_settings(force=False, settings_dir=None)`
   ([app.py](../../src/mko_data_cleaner/app.py)), plus the CLI commands. The `run`
   CLI flag `--dict-path FILE` and the `dict_path=` argument to `process_data`
   override the dictionary file (relative paths resolve against the report
-  directory — see [current-behavior.md](current-behavior.md)).
+  directory — see [current-behavior.md](current-behavior.md)). The
+  `--deduplicate` CLI flag and the `deduplicate=` argument are tri-state
+  overrides (`None` → config value; `True`/`False` → explicit on/off) for the
+  optional pre-rule de-duplication step; there is no `--no-deduplicate`.
 - **Not part of the contract:** everything under `mko_data_cleaner.core.*`.
   The README still shows the old `core.app_service.app_service` import, which
   no longer exists (the singleton was replaced by the `get_app_service`
@@ -204,11 +207,11 @@ sequenceDiagram
     participant C as CSVWorker
     participant M as MappingDict
     participant D as DBWorker
-    U->>A: process_data(report_dir, settings_dir?, dict_path?, clear_export_folder?, force?)
+    U->>A: process_data(report_dir, settings_dir?, dict_path?, clear_export_folder?, force?, deduplicate?)
     A->>A: path.is_dir() else FileNotFoundError
-    A->>F: get_app_service(settings_dir, dict_path, clear_export_folder, force)
+    A->>F: get_app_service(settings_dir, dict_path, clear_export_folder, force, deduplicate)
     F->>F: settings present? no -> SettingsNotInitializedError
-    F->>S: AppService.__init__(dict_path, clear_export_folder, force)
+    F->>S: AppService.__init__(dict_path, clear_export_folder, force, deduplicate)
     F->>F: dictConfig
     A->>S: run_report(report_dir)
     S->>S: dict_path set + exists? else FileNotFoundError (override / resolved / absolute)
@@ -218,7 +221,14 @@ sequenceDiagram
     S->>C: get_dictionary() (uses dict_path override or default)
     C-->>S: raw rules DataFrame
     S->>M: build_mapping (LIKE + FTS rules)
-    S->>D: create schema, import chunks, index
+    S->>D: create schema
+    alt deduplicate resolved true
+        S->>C: load_deduplicated(col_names) — global scan_csv + unique(keep="first", maintain_order=True)
+        C-->>S: (df, rows_read, rows_removed)
+        S->>D: write deduplicated frame once (ADBC), update_index_from_data
+    else deduplication off
+        S->>D: import chunks, update_index_from_data
+    end
     S->>D: insert_matches (LIKE / FTS5)
     S->>D: apply DELETE -> REPLACE -> ADD blocks
     S->>D: build_non_mapped
@@ -226,7 +236,7 @@ sequenceDiagram
     S->>D: sync_with_data_table
     S->>C: export clean_data
     D-->>S: close(): checkpoint, delete DB file
-    S-->>U: returns ReportResult
+    S-->>U: returns ReportResult (rows_loaded, rows_removed_duplicates, rows_resulted, rows_exported)
 ```
 
 Error path: if settings are missing the sequence stops at the factory with
@@ -248,6 +258,16 @@ dictionary processing.
   (R1: only that prefix pattern, never all files) are deleted, warned about, or
   cause an abort. On conflict or abort, `ExportFolderConflictError` is raised
   before any DB or CSV work begins.
+- **De-duplication (optional, pre-rule, non-destructive).** When the resolved
+  `deduplicate` value is true, `AppService._import_data` calls
+  `CSVWorker.load_deduplicated(col_names)` — one global `pl.scan_csv` over the
+  sorted file list with `.unique(subset=None, keep="first", maintain_order=True)` —
+  and writes the resulting frame once via ADBC (skipped when empty). The raw files
+  are never modified. `col_names` is `db_worker.data_tbl_columns[:len(csv_worker.source_headers)]`
+  (source columns only, header-cleaned, before extra columns are added).
+  `CSVWorker.data_files` is sorted at discovery (`_set_files_params`) so the
+  surviving "first occurrence" is deterministic
+  ([csv_service.py](../../src/mko_data_cleaner/core/csv_service.py)).
 - `DBWorker` is a context manager: on any exception the connections are
   closed, the WAL is checkpointed and the database file is deleted.
 - The DB file lives **inside the report directory** by default

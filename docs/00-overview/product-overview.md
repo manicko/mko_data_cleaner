@@ -82,6 +82,7 @@ The product owner is the sole maintainer today
 | Extra column | Analyst-defined output column declared by the dictionary (e.g. `BRAND CLEANED`) | [dict_service.py `_initialize_mapping`](../../src/mko_data_cleaner/core/dict_service.py) |
 | Clean data | Exported result table (all source columns + extra columns) in `clean_data/` | [export_sql_to_csv](../../src/mko_data_cleaner/core/csv_service.py) |
 | Non-mapped ("null") data | Distinct combinations of search/extra columns where any extra column stayed empty; **dictionary-improvement feedback only** — not a data-quality report or error signal (owner decision D14) | [build_non_mapped](../../src/mko_data_cleaner/core/db_service.py) |
+| De-duplication (optional) | Opt-in removal of rows identical across **all** source columns before any cleaning rule, globally across all `raw_data/` files; non-destructive (raw files untouched); controlled by `deduplicate` in `app_config.json5`, the `--deduplicate` CLI flag, or `process_data(deduplicate=...)` | [load_deduplicated](../../src/mko_data_cleaner/core/csv_service.py), [DataSettings](../../src/mko_data_cleaner/core/models.py) |
 | User settings directory | Per-user folder with `app_config.json5` + `log_config.json5`, created by `init` / `initialize_settings()` | [paths.py](../../src/mko_data_cleaner/core/paths.py) |
 
 ## Main Scenarios (as implemented today)
@@ -158,6 +159,11 @@ Explicitly out of scope for the product
    cell depends on the result, not on guessed file locations (R5, D8).
 4. Missing settings, missing input files and invalid input are reported as
    understandable errors, not import-time crashes (R1).
+5. When de-duplication is enabled, exact duplicate rows are removed
+   deterministically before rules run, and the run reports how many rows were
+   removed (`rows_removed_duplicates`) and how many resulted
+   (`rows_resulted = rows_loaded − rows_removed_duplicates`); with
+   de-duplication off the run is byte-identical to the prior behaviour.
 
 ## Unresolved Product Questions
 

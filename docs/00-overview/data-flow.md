@@ -90,8 +90,16 @@ flowchart LR
     J --> M[null_data_*.csv.gz<br/>at report root]
 ```
 
-1. **Import** — every raw file is streamed and appended to `data_table`
-   (Polars → ADBC `write_database`, chunk = 10 000).
+1. **Import** — every raw file is read and appended to `data_table`. By default
+   (de-duplication off) files are streamed in chunks and appended via Polars →
+   ADBC `write_database` (chunk = 10 000). When de-duplication is active
+   (`deduplicate` resolved true), `CSVWorker.load_deduplicated(col_names)` reads
+   all files in one global `scan_csv` plan and drops rows identical across all
+   source columns with `.unique(subset=None, keep="first", maintain_order=True)`
+   before the single bulk write; `rows_loaded` stays the raw count read before
+   de-duplication, `rows_removed_duplicates` is the removed count, and
+   `rows_resulted = rows_loaded − rows_removed_duplicates`. See the
+   [duplicate-handling row](#handling-of-missing-duplicate-unknown-and-invalid-values).
 2. **Index build (per-key resolution — intended design, decision D15)** — if
    `index_column` is configured, the distinct index table
    (`data_table_distinct`, TEMP) is filled with
@@ -151,7 +159,7 @@ flowchart LR
 | REPLACE and ADD write the same extra column | REPLACE runs first, then ADD — but ADD currently overwrites the REPLACE value instead of merging with it (owner-confirmed intent: `1` + `2` → `1 2`; implementation yields `2`) | [runtime-verified 2026-10-15] (D-2) |
 | Missing `search_column_idx` column during dictionary merge | Merge fails with a Polars error (the column name is hard-coded in the merge step) | [get_merged_dictionary](../../src/mko_data_cleaner/core/csv_service.py) [code-verified] |
 | Ragged CSV row | Polars `ComputeError` — run aborts | [runtime-verified] |
-| Duplicate rows in raw data | All imported. With `index_column` configured, rule resolution happens once per unique key (representative = latest-date row) and results are distributed back to all rows with that key | [runtime-verified on dedup semantics; intended per D15] |
+| Duplicate rows in raw data | With de-duplication **off** (default): all imported. With `deduplicate` on: exact duplicates (identical across every source column, Polars value equality — case-sensitive, whitespace-sensitive, `null` ≠ `""`) are removed **before** any cleaning rule, globally across all `raw_data/` files; the first occurrence in sorted-file + row order survives and raw files are never modified. When de-duplication is off, rule resolution still happens once per unique `index_column` key (representative = latest-date row) and results are distributed back to all rows with that key | [load_deduplicated](../../src/mko_data_cleaner/core/csv_service.py), [_import_data](../../src/mko_data_cleaner/core/app_service.py) [code-verified]; per-key path [runtime-verified, D15] |
 | Duplicate rules in the merged dictionary | Deduplicated (`unique()`) only when the merge path runs | [code-verified] |
 | Invalid FTS dictionary row | Row skipped with a warning | [code-verified] |
 

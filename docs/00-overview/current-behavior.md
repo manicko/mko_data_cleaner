@@ -29,9 +29,9 @@ everything else is **[code-verified]** by reading the implementation.
 | Entry point | Location | Notes |
 |---|---|---|
 | CLI `mko-data-cleaner init [--force]` | [app.py `init`](../../src/mko_data_cleaner/app.py) | Copies settings templates into the per-user settings directory; reachable without prior settings since the import fix |
-| CLI `mko-data-cleaner run <report_dir> [-v] [--settings-dir DIR] [--dict-path FILE] [--clear-export-folder/--no-clear-export-folder] [--force/--no-force]` | [app.py `run`](../../src/mko_data_cleaner/app.py) | `<report_dir>` must exist (`typer` `exists=True`); `--dict-path FILE` overrides the dictionary file (relative path resolves against the report directory, absolute as-is; a missing file raises `FileNotFoundError`); `--clear-export-folder` deletes stale export files before processing; `--force` skips interactive confirmation prompts; both default to the config values; any exception prints `❌ Ошибка: …` and exits with code 1 |
+| CLI `mko-data-cleaner run <report_dir> [-v] [--settings-dir DIR] [--dict-path FILE] [--clear-export-folder/--no-clear-export-folder] [--force/--no-force] [--deduplicate]` | [app.py `run`](../../src/mko_data_cleaner/app.py) | `<report_dir>` must exist (`typer` `exists=True`); `--dict-path FILE` overrides the dictionary file (relative path resolves against the report directory, absolute as-is; a missing file raises `FileNotFoundError`); `--clear-export-folder` deletes stale export files before processing; `--force` skips interactive confirmation prompts; both default to the config values; `--deduplicate` is a single tri-state flag (present → on, absent → config value; there is **no** `--no-deduplicate`, which Typer rejects with exit code 2) that removes rows identical across all source columns before any cleaning rule; any exception prints `❌ Ошибка: …` and exits with code 1 |
 | CLI `mko-data-cleaner list-settings [--settings-dir DIR]` | [app.py `list_settings`](../../src/mko_data_cleaner/app.py) | Lists JSON5 files in the user settings directory; prints a hint if the directory does not exist (does not raise) |
-| Python `process_data(report_path, settings_dir=None, dict_path=None, clear_export_folder=None, force=None)` | [app.py](../../src/mko_data_cleaner/app.py) | Synchronous; raises `FileNotFoundError` if the path is not a directory or if a `dict_path` override file is missing; raises `SettingsNotInitializedError` if settings are missing; `clear_export_folder`/`force` override the config values (see [Export Folder Cleanup](#export-folder-cleanup)) |
+| Python `process_data(report_path, settings_dir=None, dict_path=None, clear_export_folder=None, force=None, deduplicate=None)` | [app.py](../../src/mko_data_cleaner/app.py) | Synchronous; raises `FileNotFoundError` if the path is not a directory or if a `dict_path` override file is missing; raises `SettingsNotInitializedError` if settings are missing; `clear_export_folder`/`force`/`deduplicate` override the config values when not `None` (`deduplicate=True/False` forces de-duplication on/off, `None` uses the config value; see [Export Folder Cleanup](#export-folder-cleanup)) |
 | Python `initialize_settings(force=False, settings_dir=None)` | [app.py `initialize_settings`](../../src/mko_data_cleaner/app.py) | Initializes user settings by copying the packaged JSON5 templates; `settings_dir` overrides the user settings directory (forwarded to `init_service.init_project`); `force` overwrites existing files |
 | Console script | [pyproject.toml `[project.scripts]`](../../pyproject.toml) | `mko-data-cleaner = "mko_data_cleaner.app:app"` |
 
@@ -162,11 +162,21 @@ lists the participating component:
    table, indexes, the match tables; if FTS rules exist, an FTS5 virtual
    table with insert/delete/update triggers ([create_table_with_index](../../src/mko_data_cleaner/core/db_service.py),
    [link_search_table](../../src/mko_data_cleaner/core/db_service.py)).
-6. **Import raw data** — streamed in chunks of 10 000 rows through Polars and
-   appended via ADBC ([`_import_data`](../../src/mko_data_cleaner/core/app_service.py));
+6. **Import raw data** — if de-duplication is active (`deduplicate` resolved
+   true), `CSVWorker.load_deduplicated(col_names)` reads all raw files in one
+   global `scan_csv` plan, drops rows identical across all source columns with
+   Polars `.unique(subset=None, keep="first", maintain_order=True)` (first
+   occurrence in sorted-file + row order survives; raw files never modified),
+   and the resulting frame is appended once via ADBC (skipped when empty).
+   Otherwise the rows are streamed in chunks of 10 000 and appended via ADBC
+   ([`_import_data`](../../src/mko_data_cleaner/core/app_service.py),
+   [`load_deduplicated`](../../src/mko_data_cleaner/core/csv_service.py));
    then the distinct index table is populated with
    `SELECT search cols, index col, MAX(date) … GROUP BY index col`
    ([update_index_from_data](../../src/mko_data_cleaner/core/db_service.py)).
+   `rows_loaded` is the raw count read before de-duplication;
+   `rows_removed_duplicates` is the number of rows removed;
+   `rows_resulted = rows_loaded − rows_removed_duplicates`.
 7. **Compute matches** — FTS matches via the FTS5 `MATCH` join
    ([insert_matches_from_fts](../../src/mko_data_cleaner/core/db_service.py));
    LIKE matches via one `data.col LIKE rules.pattern COLLATE NOCASE` query per
@@ -282,7 +292,13 @@ carries an explicit limitation note. See
 Note: `process_data` / `AppService.run_report` returns a `ReportResult`
 (model in [models.py `ReportResult`](../../src/mko_data_cleaner/core/models.py);
 field table in the [README](../../README.md)) with output paths, timings, and row
-counts. The `dict_path` override is **not** a field on `ReportResult` (owner-confirmed
+counts. Row-count fields: `rows_loaded` (raw rows read **before** de-duplication),
+`rows_removed_duplicates` (default `0` when de-duplication is off),
+`rows_resulted` (= `rows_loaded − rows_removed_duplicates`, the post-de-duplication
+count), and `rows_exported` (the final exported count). When de-duplication is
+active and removed more than zero rows, the CLI summary appends
+` · {N} duplicate(s) removed` to the existing `"<loaded> loaded → <exported> clean"`
+line. The `dict_path` override is **not** a field on `ReportResult` (owner-confirmed
 interface) — it only selects which dictionary file is read and is threaded via
 `get_app_service(settings_dir, dict_path)` → `AppService.__init__` → the
 `dict_path` property ([architecture.md](architecture.md)).
@@ -329,6 +345,7 @@ interface) — it only selects which dictionary file is read and is threaded via
 | `export_settings.to_csv.*` | Polars CSV writer options (chunk size, compression, …) |
 | `clear_export_folder` | Whether to delete existing export files matching `<table_name>_*<export_suffix>` before processing; default `false` |
 | `force` | Whether to skip interactive confirmation prompts during export-folder inspection; default `false` |
+| `deduplicate` | Whether to remove rows identical across all source columns before any cleaning rule (global, exact, pre-rule); default `false` |
 
 `log_config.json5` configures the logging handlers/formatters and is applied by
 the factory at service construction. It still contains the unused `tests` and
