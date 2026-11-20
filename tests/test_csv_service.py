@@ -434,3 +434,127 @@ def test_set_files_params_sorts_data_files(tmp_path, monkeypatch):
     worker._set_files_params()
 
     assert worker.data_files == sorted(unsorted_files)
+
+
+def _make_dedup_worker(data_files: list, reader_settings: dict) -> CSVWorker:
+    """Build a CSVWorker instance without running ``__init__`` for unit tests."""
+    worker = CSVWorker.__new__(CSVWorker)
+    worker.data_files = sorted(data_files)
+    worker.reader_settings = reader_settings
+    return worker
+
+
+def test_load_deduplicated_removes_cross_file_duplicate(tmp_path):
+    """Two files sharing one row collapse to one; the first occurrence survives."""
+    file_a = tmp_path / "a.csv"
+    file_a.write_text(
+        "AdId;YEAR\n1;2024\n2;2024\n",
+        encoding="utf-8",
+    )
+    file_b = tmp_path / "b.csv"
+    file_b.write_text(
+        "AdId;YEAR\n2;2024\n3;2025\n",
+        encoding="utf-8",
+    )
+
+    worker = _make_dedup_worker(
+        [file_a, file_b], {"separator": ";", "has_header": True}
+    )
+
+    df, rows_read, rows_removed = worker.load_deduplicated(["AdId", "YEAR"])
+
+    assert rows_read == 4
+    assert rows_removed == 1
+    assert df.height == 3
+    # First occurrence (from file_a) survives, order preserved.
+    assert df["AdId"].to_list() == [1, 2, 3]
+
+
+def test_load_deduplicated_removes_duplicate_beyond_chunk_size(tmp_path, monkeypatch):
+    """A duplicate separated by more than CHUNK_SIZE rows is still removed.
+
+    ``load_deduplicated`` builds one global plan, so chunk size is irrelevant to
+    the result; the test pins that behaviour at the primitive level (D3).
+    """
+    monkeypatch.setattr(CSVWorker, "CHUNK_SIZE", 2)
+
+    rows = [f"{i};v{i}" for i in range(1, 9)]  # 8 unique rows
+    rows.append("3;v3")  # duplicate of row index 2, far beyond chunk size
+    file_a = tmp_path / "a.csv"
+    file_a.write_text("AdId;VAL\n" + "\n".join(rows) + "\n", encoding="utf-8")
+
+    worker = _make_dedup_worker([file_a], {"separator": ";", "has_header": True})
+
+    df, rows_read, rows_removed = worker.load_deduplicated(["AdId", "VAL"])
+
+    assert rows_read == 9
+    assert rows_removed == 1
+    assert df.height == 8
+    assert df["AdId"].to_list() == list(range(1, 9))
+
+
+def test_load_deduplicated_null_differs_from_empty_string(tmp_path):
+    """``null`` and ``""`` are distinct values and do not collapse (D11b)."""
+    file_a = tmp_path / "a.csv"
+    file_a.write_text(
+        'AdId;VAL\n1;\n2;""\n',
+        encoding="utf-8",
+    )
+
+    worker = _make_dedup_worker([file_a], {"separator": ";", "has_header": True})
+
+    df, rows_read, rows_removed = worker.load_deduplicated(["AdId", "VAL"])
+
+    assert rows_read == 2
+    assert rows_removed == 0
+    assert df.height == 2
+    assert df["VAL"].null_count() == 1
+    assert df["VAL"].to_list() == [None, ""]
+
+
+def test_load_deduplicated_is_case_sensitive(tmp_path):
+    """Rows differing only in letter case are not duplicates (D11c)."""
+    file_a = tmp_path / "a.csv"
+    file_a.write_text(
+        "AdId;VAL\n1;Apple\n2;apple\n",
+        encoding="utf-8",
+    )
+
+    worker = _make_dedup_worker([file_a], {"separator": ";", "has_header": True})
+
+    df, rows_read, rows_removed = worker.load_deduplicated(["AdId", "VAL"])
+
+    assert rows_read == 2
+    assert rows_removed == 0
+    assert df.height == 2
+
+
+def test_load_deduplicated_collapses_identical_null_rows(tmp_path):
+    """Rows identical across all columns including a null value collapse (D11a)."""
+    file_a = tmp_path / "a.csv"
+    file_a.write_text(
+        "AdId;VAL\n1;\n1;\n",
+        encoding="utf-8",
+    )
+
+    worker = _make_dedup_worker([file_a], {"separator": ";", "has_header": True})
+
+    df, rows_read, rows_removed = worker.load_deduplicated(["AdId", "VAL"])
+
+    assert rows_read == 2
+    assert rows_removed == 1
+    assert df.height == 1
+
+
+def test_load_deduplicated_header_only_returns_empty_frame(tmp_path):
+    """Header-only / zero-row input yields an empty frame and (0, 0)."""
+    file_a = tmp_path / "a.csv"
+    file_a.write_text("AdId;YEAR\n", encoding="utf-8")
+
+    worker = _make_dedup_worker([file_a], {"separator": ";", "has_header": True})
+
+    df, rows_read, rows_removed = worker.load_deduplicated(["AdId", "YEAR"])
+
+    assert df.is_empty()
+    assert rows_read == 0
+    assert rows_removed == 0

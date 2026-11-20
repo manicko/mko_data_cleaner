@@ -186,6 +186,50 @@ class CSVWorker:
             logger.error(traceback.format_exc())
             raise err
 
+    def load_deduplicated(self, col_names: list[str]) -> tuple[pl.DataFrame, int, int]:
+        """Read all raw files, drop exact duplicate rows, return (df, rows_read, rows_removed).
+
+        De-duplication is global: one lazy plan is built over the whole sorted
+        file list, so a duplicate is removed even when the copies live in
+        different files or far apart inside one file. Rows are compared across
+        every source column using Polars' exact value equality, and the first
+        occurrence in input order survives.
+
+        The raw files are never modified. A header-only (zero-row) input yields
+        an empty frame with ``rows_read == rows_removed == 0``.
+
+        Parameters
+        ----------
+        col_names : list[str]
+            Source column names applied to every raw file (header cleaning).
+
+        Returns
+        -------
+        tuple[pl.DataFrame, int, int]
+            The de-duplicated frame, the raw row count before de-duplication,
+            and the number of removed duplicate rows.
+        """
+        try:
+            frame = pl.scan_csv(
+                self.data_files,
+                new_columns=col_names,
+                **self.reader_settings,
+            )
+            # `rows_read` is the raw count before de-duplication; `collect()` on
+            # the same unfiltered plan counts the source rows exactly once.
+            rows_read = frame.select(pl.len()).collect().item()
+            df = frame.unique(
+                subset=None,
+                keep="first",
+                maintain_order=True,
+            ).collect()
+            rows_removed = rows_read - df.height
+            return df, rows_read, rows_removed
+
+        except Exception as err:
+            logger.error(traceback.format_exc())
+            raise err
+
     def get_data_chunks(
         self, col_names: list[str]
     ) -> Generator[pl.DataFrame, None, None]:
