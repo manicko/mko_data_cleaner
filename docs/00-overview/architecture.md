@@ -164,9 +164,8 @@ Performance pragmas are tuned for bulk processing
   overrides (`None` → config value; `True`/`False` → explicit on/off) for the
   optional pre-rule de-duplication step; there is no `--no-deduplicate`.
 - **Not part of the contract:** everything under `mko_data_cleaner.core.*`.
-  The README still shows the old `core.app_service.app_service` import, which
-  no longer exists (the singleton was replaced by the `get_app_service`
-  factory) — documented as discrepancy D-3 in
+  The old `core.app_service.app_service` singleton no longer exists (it was
+  replaced by the `get_app_service` factory) — documented as discrepancy D-3 in
   [open-questions.md](open-questions.md).
 - `src/mko_data_cleaner/__init__.py` re-exports `process_data`,
   `initialize_settings`, `ReportResult`, `SettingsNotInitializedError`,

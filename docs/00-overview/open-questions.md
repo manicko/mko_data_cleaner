@@ -78,7 +78,7 @@ specification
 | D22 | **Mechanism:** Polars built-in `.unique()` with `keep="first"`, `maintain_order=True`. | PO answer Q9. Implemented as one global lazy plan over the sorted file list (`load_deduplicated`), not per chunk. | Confirmed; **implemented** |
 | D23 | **Metrics:** `rows_loaded` (raw, as today), `rows_removed_duplicates`, `rows_resulted = rows_loaded − rows_removed_duplicates`. | PO answer Q7. | Confirmed; **implemented** |
 | D24 | **Scale target:** hundreds of thousands to a few million rows per report. | PO answer Q10=B. | Confirmed (design target) |
-| D25 | **CLI feedback:** the existing summary line is preserved and, when de-duplication is active, a `… · N duplicate(s) removed` segment is appended. | PO answer Q7 requires visible feedback; appending preserves the existing `"3 loaded → 2 clean"` substring asserted by tests. | Confirmed; **implemented** |
+| D25 | **CLI feedback:** the existing summary line is preserved and, when de-duplication removes at least one row (`rows_removed_duplicates > 0`), a `… · N duplicate(s) removed` segment is appended. The active-but-zero-removed case stays silent — the summary is then identical to a non-dedup run (spec **OQ-A**, answered below). | PO answer Q7 requires visible feedback; appending preserves the existing `"3 loaded → 2 clean"` substring asserted by tests. | Confirmed; **implemented** |
 | D26 | **`timings` contract unchanged:** no new `timings` key; de-duplication time is included in `timings["import"]`. | Avoids churn on the asserted `{import, mapping, export}` key set; de-duplication is part of loading. | Confirmed (engineering); **implemented** |
 | D27 | **Determinism:** `CSVWorker.data_files` is sorted once at discovery, for both the de-duplication and the non-de-duplication path. | `Path.glob` order is filesystem-dependent; "first occurrence" must not be. | Confirmed (engineering); **implemented** |
 
@@ -375,6 +375,32 @@ defensive INSERT branch of `_sync_tables` cannot fire in the standard flow
 5. **Alternatives:** (a) full English (house rule); (b) keep Russian and
    amend the rule for this repo; (c) bilingual by configuration.
 
+### OQ-A — Should the CLI show the removed count when de-duplication removed nothing? — ANSWERED (implementation decision, 2026-11-20)
+
+1. **Code shows:** `app.py` appends the ` · {N} duplicate(s) removed` segment to the
+   CLI summary only when `result.rows_removed_duplicates > 0`
+   ([app.py `run`](../../src/mko_data_cleaner/app.py)), where the source comment
+   records the choice. De-duplication that is active but removes nothing leaves the
+   summary identical to a non-dedup run.
+2. **Spec working assumption:** the specification
+   ([`08_duplicate_rows_removal_spec.md`](../../.ai/problems/08_duplicate_rows_removal_spec.md)
+   §10, OQ-A) assumed the opposite — print the count whenever de-duplication is
+   active, even when it is `0` — so the step is auditable.
+3. **Why it matters:** the two positions differ only in the zero case; neither affects
+   the metric fields on `ReportResult` (`rows_removed_duplicates == 0` is always
+   reported there).
+4. **Question:** should the CLI still print the removal count when de-duplication is
+   active and removed zero rows?
+5. **Alternatives:** (a) print whenever active (spec assumption); (b) print only when
+   at least one row was removed (implemented).
+
+**Answer (2026-11-20, implementation decision recorded in D25):** option (b) — the
+segment is appended only when `rows_removed_duplicates > 0`, so an
+active-but-nothing-removed run prints the legacy summary. The rationale is recorded in
+the source comment in [`app.py`](../../src/mko_data_cleaner/app.py) ("intentionally
+silent: nothing was removed, so no audit trail is needed"); the full audit trail stays
+available to API consumers through `ReportResult.rows_removed_duplicates`.
+
 ## 5. Investigation Limitations
 
 - The pytest suite (35 tests) was run locally on 2026-10-15 and passed; tests
@@ -392,7 +418,11 @@ defensive INSERT branch of `_sync_tables` cannot fire in the standard flow
   2026-10-15 and re-described per owner decision D15.
 - The review questions OQ-1…OQ-4 were answered by the owner on 2026-10-15 and
   are recorded as decisions D12–D15 in §1; the remaining questions OQ-5…OQ-10
-  are still **open** and no answers have been assumed for them.
+  are still **open** and no answers have been assumed for them. OQ-A (de-duplication
+  CLI feedback) is answered by the implementation decision recorded in D25.
+- De-duplication (decisions D16–D27) is verified by the automated tests added in
+  commit `ff5b4e6` (D1–D18 matrix); the primitive-level measurements quoted in the
+  specification (§6 R1) were taken during research and are not re-measured here.
 - No application code, configuration, dependency or test file was modified by
   the investigation; changes were limited to documentation (this register,
   the other overview docs, README) and the new audit problem note

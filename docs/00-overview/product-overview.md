@@ -127,11 +127,11 @@ constraints were investigated and confirmed with the product owner on
 
 - Done: import-time crash fix (R1), JSON5 templates shipped in wheel/sdist
   (R2), dedicated missing-settings error (D2), English strings in the new CLI
-  messages, `list_settings` repointed (D5).
-- Not done: top-level package re-exports (`__init__.py` is empty), the result
-  object (owner decision D8, tracked as gap D-6), `rich` declared, SPDX
-  license + corrected copyright, `__version__`, example notebook (D9), CI
-  (D10), `v0.2.0` tag (D11).
+  messages, `list_settings` repointed (D5), top-level package re-exports
+  (`__init__.py`, gap D-8.4), the result object `ReportResult` (D8, gap D-6),
+  optional global de-duplication (D16–D27, see [Success Criteria](#success-criteria-product-level)).
+- Not done: `rich` declared, SPDX license + corrected copyright, `__version__`,
+  example notebook (D9), CI (D10), `v0.2.0` tag (D11).
 
 The processing pipeline itself (CSV → Polars → SQLite → rules → export) is
 considered functionally adequate and is **not** part of the rework
