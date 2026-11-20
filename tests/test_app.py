@@ -315,7 +315,7 @@ def test_process_data_returns_report_result(
     fake_service.run_report.return_value = fake_result
     monkeypatch.setattr(
         "mko_data_cleaner.app.get_app_service",
-        lambda settings_dir=None, dict_path=None, clear_export_folder=None, force=None: (
+        lambda settings_dir=None, dict_path=None, clear_export_folder=None, force=None, deduplicate=None: (
             fake_service
         ),
     )
@@ -1327,3 +1327,158 @@ def test_resolved_deduplicate_override_precedence(populated_settings: Path):
         settings_dir=populated_settings, deduplicate=False
     )
     assert service_override._resolved_deduplicate() is False
+
+
+# --------------------------------------------------------------------------- #
+# B4 (T5): CLI flag + public API override for de-duplication.
+#
+# The ``deduplicate`` option is a single tri-state flag (D16): absent → ``None``
+# (config decides), present → ``True``. There is deliberately no
+# ``--no-deduplicate`` counterpart; passing it makes Typer exit with code 2.
+# --------------------------------------------------------------------------- #
+
+
+def test_cli_deduplicate_flag_enables_when_config_false(
+    populated_settings: Path, tmp_path: Path
+):
+    """--deduplicate turns de-duplication ON even when the config says false (D8)."""
+    _set_config_keys(populated_settings, deduplicate=False)
+    report_dir = _make_duplicate_report(tmp_path / "report_flag_on")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            str(report_dir),
+            "--settings-dir",
+            str(populated_settings),
+            "--deduplicate",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Report complete" in result.output
+    assert "4 loaded → 2 clean" in result.output
+    normalized = " ".join(result.output.split())
+    assert "1 duplicate(s) removed" in normalized
+
+
+def test_cli_deduplicate_absent_with_config_false_is_off(
+    populated_settings: Path, tmp_path: Path
+):
+    """Flag absent + config false → de-duplication OFF (D17)."""
+    _set_config_keys(populated_settings, deduplicate=False)
+    report_dir = _make_duplicate_report(tmp_path / "report_flag_absent_off")
+
+    result = CliRunner().invoke(
+        app,
+        ["run", str(report_dir), "--settings-dir", str(populated_settings)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "4 loaded → 3 clean" in result.output
+    assert "duplicate(s) removed" not in result.output
+
+
+def test_cli_deduplicate_absent_with_config_true_is_on(
+    populated_settings: Path, tmp_path: Path
+):
+    """Flag absent + config true → de-duplication ON (D7/D9)."""
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_duplicate_report(tmp_path / "report_flag_absent_on")
+
+    result = CliRunner().invoke(
+        app,
+        ["run", str(report_dir), "--settings-dir", str(populated_settings)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "4 loaded → 2 clean" in result.output
+    # Rich wraps long lines at the console width; normalize whitespace so the
+    # removal segment is matched regardless of where the wrap falls.
+    normalized = " ".join(result.output.split())
+    assert "1 duplicate(s) removed" in normalized
+
+
+def test_process_data_deduplicate_false_overrides_config_true(
+    populated_settings: Path, tmp_path: Path
+):
+    """process_data(deduplicate=False) overrides a config value of true (D10)."""
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_duplicate_report(tmp_path / "report_override_off")
+
+    result = process_data(
+        report_dir, settings_dir=populated_settings, deduplicate=False
+    )
+
+    assert result.rows_loaded == 4
+    assert result.rows_removed_duplicates == 0
+    assert result.rows_resulted == 4
+    assert result.rows_exported == 3  # duplicate row survives
+
+
+def test_process_data_deduplicate_true_overrides_config_false(
+    populated_settings: Path, tmp_path: Path
+):
+    """process_data(deduplicate=True) overrides a config value of false (D10)."""
+    _set_config_keys(populated_settings, deduplicate=False)
+    report_dir = _make_duplicate_report(tmp_path / "report_override_on")
+
+    result = process_data(report_dir, settings_dir=populated_settings, deduplicate=True)
+
+    assert result.rows_loaded == 4
+    assert result.rows_removed_duplicates == 1
+    assert result.rows_resulted == 3
+    assert result.rows_exported == 2
+
+
+def test_cli_no_deduplicate_is_rejected(tmp_path: Path, synthetic_report: Path):
+    """--no-deduplicate is not a supported option (D16): Typer exits with code 2.
+
+    The assertion is specific to exit code 2 (Typer's usage-error code), so a
+    settings error — which exits 1 — cannot satisfy it.
+    """
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            str(synthetic_report),
+            "--settings-dir",
+            str(tmp_path / "no_settings"),
+            "--no-deduplicate",
+        ],
+    )
+
+    assert result.exit_code == 2
+
+
+def test_cli_summary_line_without_dedup_keeps_legacy_substring(
+    populated_settings: Path, synthetic_report: Path
+):
+    """De-duplication off → the legacy ``3 loaded → 2 clean`` substring remains (D25)."""
+    result = CliRunner().invoke(
+        app,
+        ["run", str(synthetic_report), "--settings-dir", str(populated_settings)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "3 loaded → 2 clean" in result.output
+    assert "duplicate(s) removed" not in result.output
+
+
+def test_cli_summary_line_with_dedup_shows_removed_segment(
+    populated_settings: Path, tmp_path: Path
+):
+    """De-duplication active with a duplicate → the removal segment is appended (D25)."""
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_duplicate_report(tmp_path / "report_summary_dedup")
+
+    result = CliRunner().invoke(
+        app,
+        ["run", str(report_dir), "--settings-dir", str(populated_settings)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "4 loaded → 2 clean" in result.output
+    normalized = " ".join(result.output.split())
+    assert "1 duplicate(s) removed" in normalized

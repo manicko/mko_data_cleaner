@@ -88,6 +88,11 @@ def run(
         "--force/--no-force",
         help="Skip interactive confirmation prompts.",
     ),
+    deduplicate: bool | None = typer.Option(
+        None,
+        "--deduplicate",
+        help="Remove duplicate rows (identical across all columns) before cleaning.",
+    ),
 ):
     """Запустить выгрузку отчёта"""
     if verbose:
@@ -100,15 +105,22 @@ def run(
         dict_path=dict_path,
         clear_export_folder=clear_export_folder,
         force=force,
+        deduplicate=deduplicate,
     )
 
     try:
         result = service.run_report(report)
-        console.print(
-            f"[green]✅ Report complete:[/green] "
+        summary = (
             f"{result.rows_loaded:,} loaded → {result.rows_exported:,} clean "
             f"({result.duration:.1f}s) ↠ {result.export_dir}"
         )
+        if result.rows_removed_duplicates > 0:
+            # OQ-A working assumption: surface the removal count so the user can
+            # audit the de-duplication step. The active-but-zero-removed case is
+            # intentionally silent: nothing was removed, so no audit trail is
+            # needed and the summary stays identical to a non-dedup run.
+            summary += f" · {result.rows_removed_duplicates:,} duplicate(s) removed"
+        console.print(f"[green]✅ Report complete:[/green] {summary}")
 
     except Exception as e:
         console.print(f"[red]❌ Ошибка:[/red] {e}")
@@ -155,6 +167,7 @@ def process_data(
     dict_path: Path | None = None,
     clear_export_folder: bool | None = None,
     force: bool | None = None,
+    deduplicate: bool | None = None,
 ) -> ReportResult:
     """
     Run the data-cleaning report for the given directory.
@@ -170,6 +183,12 @@ def process_data(
     used as-is. When ``None`` (the default) the config-driven
     ``<report_dir>/dict/merged_dictionary.csv`` is used.
 
+    ``deduplicate`` optionally overrides the ``deduplicate`` setting from
+    ``app_config.json5``. ``None`` (the default) uses the config value;
+    ``True``/``False`` forces de-duplication on/off. De-duplication removes
+    rows that are identical across all source columns before any cleaning rule
+    is applied.
+
     Returns:
         :class:`~mko_data_cleaner.core.models.ReportResult` with output
         paths, timings, and row counts.
@@ -182,6 +201,7 @@ def process_data(
         dict_path=dict_path,
         clear_export_folder=clear_export_folder,
         force=force,
+        deduplicate=deduplicate,
     ).run_report(path)
 
 
