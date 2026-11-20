@@ -176,6 +176,7 @@ class DataSettings(BaseModel):
     export_settings: WriteCSV
     clear_export_folder: bool = False
     force: bool = False
+    deduplicate: bool = False
 
 
 # --- Report Result

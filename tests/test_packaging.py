@@ -1,6 +1,7 @@
 """Packaging tests (B6/T6): package-data regression gate (F3),
 
-MANIFEST.in hygiene (F10), and metadata guards (F5, D4).
+MANIFEST.in hygiene (F10), metadata guards (F5, D4) and shipped
+``app_config.json5`` defaults (B1/T1).
 
 These tests run from a source checkout (pythonpath=["src"]) — no wheel
 build required. They complement the CI build job's wheel-content assertion
@@ -56,6 +57,49 @@ def test_template_json5_parse():
     )
     assert "data_paths" in app_cfg
     assert "handlers" in log_cfg
+
+
+def test_template_deduplicate_defaults_to_false():
+    """The shipped ``app_config.json5`` parses to ``deduplicate is False``.
+
+    Guards the model + template coupling: ``DataSettings`` ignores unknown keys,
+    so shipping the template key without the model field would be a silent no-op.
+    """
+    import importlib.resources as resources
+
+    import json5
+
+    from mko_data_cleaner.core.models import DataSettings
+
+    pkg = resources.files("mko_data_cleaner")
+    raw_config = json5.loads(
+        (pkg / "settings" / "app_config.json5").read_text(encoding="utf-8")
+    )
+
+    assert raw_config["deduplicate"] is False
+    assert DataSettings(**raw_config).deduplicate is False
+
+
+def test_data_settings_deduplicate_default_and_override():
+    """``deduplicate`` defaults to ``False`` and accepts an explicit ``True``.
+
+    Also covers legacy configs that predate the key (FR-9): a config without
+    ``deduplicate`` must still validate and resolve to ``False``.
+    """
+    import importlib.resources as resources
+
+    import json5
+
+    from mko_data_cleaner.core.models import DataSettings
+
+    pkg = resources.files("mko_data_cleaner")
+    raw_config = json5.loads(
+        (pkg / "settings" / "app_config.json5").read_text(encoding="utf-8")
+    )
+    raw_config.pop("deduplicate")  # simulate a legacy config
+
+    assert DataSettings(**raw_config).deduplicate is False
+    assert DataSettings(**raw_config, deduplicate=True).deduplicate is True
 
 
 def test_manifest_in_no_stale_project_name():

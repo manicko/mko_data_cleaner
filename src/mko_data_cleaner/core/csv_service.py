@@ -63,6 +63,9 @@ class CSVWorker:
             self.data_path,
             extensions=(ext,),
         )
+        # Deterministic order: "first occurrence kept" de-duplication and export
+        # row order must not depend on the filesystem-dependent glob order.
+        self.data_files.sort()
 
         if self.data_files and len(self.data_files) > 0:
             self.sample_data_file = self.data_files[0]

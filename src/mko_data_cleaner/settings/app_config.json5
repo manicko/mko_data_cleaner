@@ -46,5 +46,6 @@
     }
   },
   "clear_export_folder": false,
-  "force": false
+  "force": false,
+  "deduplicate": false
 }

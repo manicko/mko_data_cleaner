@@ -403,3 +403,34 @@ def test_get_dictionary_separator_mismatch_raises(tmp_path):
     assert "merged_dictionary.csv" in msg
     assert "separator" in msg
     assert "reading dictionary" in msg
+
+
+def test_set_files_params_sorts_data_files(tmp_path, monkeypatch):
+    """``data_files`` is sorted by path regardless of discovery order.
+
+    De-duplication keeps the first occurrence in input order, so the file order
+    must be deterministic and not depend on the filesystem-dependent glob order.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    for name in ("zeta.csv", "alpha.csv", "middle.csv"):
+        (data_dir / name).write_text("AdId;YEAR\n1;2024\n", encoding="utf-8")
+
+    unsorted_files = [
+        data_dir / "zeta.csv",
+        data_dir / "alpha.csv",
+        data_dir / "middle.csv",
+    ]
+    monkeypatch.setattr(
+        "mko_data_cleaner.core.csv_service.list_files_in_directory",
+        lambda *args, **kwargs: unsorted_files,
+    )
+
+    worker = CSVWorker.__new__(CSVWorker)
+    worker.data_settings = {"extension": "csv"}
+    worker.reader_settings = {"separator": ";", "has_header": True}
+    worker.data_path = data_dir
+
+    worker._set_files_params()
+
+    assert worker.data_files == sorted(unsorted_files)
