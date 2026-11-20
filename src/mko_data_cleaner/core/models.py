@@ -208,3 +208,5 @@ class ReportResult(BaseModel):
     # --- row counts ---
     rows_loaded: NonNegativeInt
     rows_exported: NonNegativeInt
+    rows_removed_duplicates: NonNegativeInt = 0
+    rows_resulted: NonNegativeInt = 0

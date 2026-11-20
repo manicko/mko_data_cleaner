@@ -44,6 +44,7 @@ class AppService:
         dict_path: Path | None = None,
         clear_export_folder: bool | None = None,
         force: bool | None = None,
+        deduplicate: bool | None = None,
     ):
         self.app_paths = app_paths
         self.resolver = resolver
@@ -52,6 +53,7 @@ class AppService:
         self._dict_path = dict_path
         self._clear_export_folder = clear_export_folder
         self._force = force
+        self._deduplicate = deduplicate
 
     def _resolved_clear_export_folder(self) -> bool:
         return (
@@ -62,6 +64,13 @@ class AppService:
 
     def _resolved_force(self) -> bool:
         return self._force if self._force is not None else self.app_config.force
+
+    def _resolved_deduplicate(self) -> bool:
+        return (
+            self._deduplicate
+            if self._deduplicate is not None
+            else self.app_config.deduplicate
+        )
 
     def _is_interactive(self) -> bool:
         """Check if running in an interactive terminal context.
@@ -228,12 +237,54 @@ class AppService:
                 self.resolver.ensure_file_parent(file_path)
                 handler["filename"] = file_path
 
-    @staticmethod
-    def _import_data(db_worker, csv_worker) -> int:
-        rows_count = 0
+    def _import_data(self, db_worker, csv_worker) -> tuple[int, int]:
         col_count = len(csv_worker.source_headers)
+        col_names = db_worker.data_tbl_columns[:col_count]
 
-        for chunk in csv_worker.get_data_chunks(db_worker.data_tbl_columns[:col_count]):
+        if self._resolved_deduplicate():
+            rows_loaded, rows_removed = self._import_deduplicated(
+                db_worker, csv_worker, col_names
+            )
+        else:
+            rows_loaded, rows_removed = self._import_in_chunks(
+                db_worker, csv_worker, col_names
+            )
+
+        logger.info(
+            "%s rows were loaded to data table (removed duplicates: %s, resulted: %s)",
+            f"{rows_loaded:,}",
+            f"{rows_removed:,}",
+            f"{rows_loaded - rows_removed:,}",
+        )
+
+        db_worker.update_index_from_data()
+        return rows_loaded, rows_removed
+
+    def _import_deduplicated(
+        self, db_worker, csv_worker, col_names: list[str]
+    ) -> tuple[int, int]:
+        """Load all raw rows after global de-duplication (one bulk write)."""
+        df, rows_read, rows_removed = csv_worker.load_deduplicated(col_names)
+
+        # Never write an empty frame to SQLite (header-only / zero-row input).
+        if not df.is_empty():
+            df.write_database(
+                table_name=db_worker.data_tbl_name,
+                connection=db_worker.db_adb_con,
+                engine="adbc",
+                if_table_exists="append",
+            )
+            db_worker.db_adb_con.commit()
+
+        return rows_read, rows_removed
+
+    def _import_in_chunks(
+        self, db_worker, csv_worker, col_names: list[str]
+    ) -> tuple[int, int]:
+        """Load raw rows in chunks exactly as the legacy pipeline does."""
+        rows_count = 0
+
+        for chunk in csv_worker.get_data_chunks(col_names):
             rows_count += chunk.write_database(
                 table_name=db_worker.data_tbl_name,
                 connection=db_worker.db_adb_con,
@@ -243,10 +294,7 @@ class AppService:
             logger.debug(f"write_database → {rows_count:,} rows")
         db_worker.db_adb_con.commit()
 
-        logger.info(f"{rows_count:,} rows were loaded to data table")
-
-        db_worker.update_index_from_data()
-        return rows_count
+        return rows_count, 0
 
     def run_report(self, data_path: str | Path) -> ReportResult:
         start_time = datetime.now().replace(microsecond=0)
@@ -339,7 +387,7 @@ class AppService:
 
             # loading data to database
             t_import = perf_counter()
-            rows_loaded = self._import_data(db_worker, csv_worker)
+            rows_loaded, rows_removed = self._import_data(db_worker, csv_worker)
             timings["import"] = perf_counter() - t_import
 
             # importing fts rules to db
@@ -455,6 +503,8 @@ class AppService:
             timings=timings,
             rows_loaded=rows_loaded,
             rows_exported=rows_exported,
+            rows_removed_duplicates=rows_removed,
+            rows_resulted=rows_loaded - rows_removed,
         )
 
 
@@ -495,6 +545,7 @@ def get_app_service(
     dict_path: Path | None = None,
     clear_export_folder: bool | None = None,
     force: bool | None = None,
+    deduplicate: bool | None = None,
 ) -> AppService:
     """Lazily construct :class:`AppService`, validating settings first.
 
@@ -512,6 +563,7 @@ def get_app_service(
         dict_path=dict_path,
         clear_export_folder=clear_export_folder,
         force=force,
+        deduplicate=deduplicate,
     )
     logging.config.dictConfig(service.log_config.model_dump())
     return service

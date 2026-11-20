@@ -1147,3 +1147,183 @@ def test_non_matching_files_dont_trigger_warning(
     result = process_data(synthetic_report, settings_dir=populated_settings)
     assert result.rows_exported == 2
     assert (clean_dir / "notes.txt").exists()  # non-matching file preserved
+
+
+# --------------------------------------------------------------------------- #
+# B3 (T4): pipeline integration of de-duplication + row-count metrics.
+# --------------------------------------------------------------------------- #
+
+
+def _make_duplicate_report(report_dir: Path) -> Path:
+    """Create a report whose raw data contains one exact duplicate row.
+
+    Mirrors ``synthetic_report`` (3 distinct rows, dictionary deletes Brand2)
+    but repeats the first row, so raw rows = 4 and post-dedup rows = 3. After
+    the dictionary DELETE of Brand2, exactly 2 rows are exported.
+    """
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id1;2024-01-01;2024;01;Brand1",  # exact duplicate of the row above
+        "id2;2024-01-15;2024;01;Brand2",
+        "id3;2024-02-01;2024;02;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+def _make_header_only_report(report_dir: Path) -> Path:
+    """Create a report whose raw CSV contains only a header (zero data rows)."""
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("AdId;researchDate;YEAR;MONTH;BRAND\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+def _exported_rows(report_dir: Path) -> list[tuple]:
+    """Read the exported CSV files back as sorted row tuples for comparison."""
+    export_files = sorted((report_dir / "clean_data").glob("*.csv.gz"))
+    assert export_files, "expected at least one exported CSV file"
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+    rows = [tuple(row) for row in merged.iter_rows()]
+    return sorted(rows, key=lambda r: tuple(str(v) for v in r))
+
+
+def test_dedup_on_reports_metrics(populated_settings: Path, tmp_path: Path):
+    """De-duplication ON: raw rows loaded, one duplicate removed, result derived.
+
+    De-duplication is enabled through ``app_config.json5`` (``deduplicate=true``)
+    because the public ``process_data`` override is added in B4/T5; this block
+    (B3/T4) wires the pipeline and metrics only.
+    """
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_duplicate_report(tmp_path / "report_dedup")
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert isinstance(result, ReportResult)
+    assert result.rows_loaded == 4  # raw rows before de-duplication
+    assert result.rows_removed_duplicates == 1  # one exact duplicate
+    assert result.rows_resulted == result.rows_loaded - 1
+    assert result.rows_resulted == 3
+    assert result.rows_exported == 2  # Brand2 deleted by the dictionary rule
+    assert set(result.timings.keys()) == {"import", "mapping", "export"}
+
+
+def test_dedup_off_reports_metrics(populated_settings: Path, synthetic_report: Path):
+    """De-duplication OFF (shipped default): no rows removed, result equals loaded."""
+    result = process_data(synthetic_report, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 3
+    assert result.rows_removed_duplicates == 0
+    assert result.rows_resulted == result.rows_loaded
+    assert result.rows_exported == 2
+    assert set(result.timings.keys()) == {"import", "mapping", "export"}
+
+
+def test_dedup_off_on_duplicate_fixture_reports_no_removal(
+    populated_settings: Path, tmp_path: Path
+):
+    """De-duplication OFF keeps exact duplicates: nothing removed, nothing lost."""
+    report_dir = _make_duplicate_report(tmp_path / "report_nodedup")
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 4
+    assert result.rows_removed_duplicates == 0
+    assert result.rows_resulted == result.rows_loaded
+    assert result.rows_exported == 3  # both Brand1 duplicate rows exported
+    assert set(result.timings.keys()) == {"import", "mapping", "export"}
+
+
+def test_dedup_on_empty_input_reports_zero(populated_settings: Path, tmp_path: Path):
+    """Header-only input with de-duplication ON: no crash, zero counts (D6)."""
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_header_only_report(tmp_path / "report_empty")
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert isinstance(result, ReportResult)
+    assert result.rows_loaded == 0
+    assert result.rows_removed_duplicates == 0
+    assert result.rows_resulted == 0
+    assert result.rows_exported == 0
+    assert set(result.timings.keys()) == {"import", "mapping", "export"}
+
+
+def test_dedup_preserves_exported_row_set(populated_settings: Path, tmp_path: Path):
+    """For exact duplicates, the exported row set is identical with/without dedup.
+
+    Two separate user settings dirs are used so the same config value is not
+    mutated between the two runs.
+    """
+    dedup_settings = tmp_path / "userdir_dedup"
+    plain_settings = tmp_path / "userdir_plain"
+    for user_dir in (dedup_settings, plain_settings):
+        settings_subdir = user_dir / "settings"
+        settings_subdir.mkdir(parents=True)
+        for name in ("app_config.json5", "log_config.json5"):
+            shutil.copy2(TEMPLATE_SETTINGS_DIR / name, settings_subdir / name)
+    _set_config_keys(dedup_settings, deduplicate=True)
+
+    dedup_report = _make_duplicate_report(tmp_path / "report_dedup_set")
+    plain_report = _make_duplicate_report(tmp_path / "report_plain_set")
+
+    result_dedup = process_data(dedup_report, settings_dir=dedup_settings)
+    result_plain = process_data(plain_report, settings_dir=plain_settings)
+
+    assert result_dedup.rows_removed_duplicates == 1
+    assert result_plain.rows_removed_duplicates == 0
+    # The distinct dataset reaching the export is identical in both runs; the
+    # non-dedup run merely repeats the duplicated row.
+    assert set(_exported_rows(dedup_report)) == set(_exported_rows(plain_report))
+
+
+def test_resolved_deduplicate_override_precedence(populated_settings: Path):
+    """Explicit override wins over config; None falls back to config (default False)."""
+    service = get_app_service(settings_dir=populated_settings)
+    # Shipped template default is false.
+    assert service._resolved_deduplicate() is False
+
+    service._deduplicate = True
+    assert service._resolved_deduplicate() is True
+
+    service._deduplicate = False
+    assert service._resolved_deduplicate() is False
+
+    # Config true + no override → resolved true.
+    _set_config_keys(populated_settings, deduplicate=True)
+    service_from_config = get_app_service(settings_dir=populated_settings)
+    assert service_from_config._resolved_deduplicate() is True
+
+    # Explicit False overrides config true.
+    service_override = get_app_service(
+        settings_dir=populated_settings, deduplicate=False
+    )
+    assert service_override._resolved_deduplicate() is False
