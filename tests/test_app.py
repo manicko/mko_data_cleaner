@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 
 from mko_data_cleaner.app import app, initialize_settings, process_data
 from mko_data_cleaner.core.app_service import AppService, get_app_service
+from mko_data_cleaner.core.csv_service import CSVWorker
 from mko_data_cleaner.core.errors import (
     DictionaryStructureError,
     ExportFolderConflictError,
@@ -1482,3 +1483,550 @@ def test_cli_summary_line_with_dedup_shows_removed_segment(
     assert "4 loaded → 2 clean" in result.output
     normalized = " ".join(result.output.split())
     assert "1 duplicate(s) removed" in normalized
+
+
+# --------------------------------------------------------------------------- #
+# B5 (T6): D1–D18 coverage matrix — end-to-end gaps not covered above.
+#
+# Each test maps to a row of spec §13. Tests already covered by
+# ``test_dedup_on_reports_metrics`` / ``test_dedup_off_reports_metrics`` /
+# ``test_dedup_preserves_exported_row_set`` / the CLI precedence tests above
+# are intentionally NOT duplicated here. This block adds only the D rows that
+# lack an explicit end-to-end assertion: D3 (chunk boundary), D4 (dedup-on, no
+# duplicate), D5 (all rows identical), D6 single-row, D12 (first-occurrence
+# determinism), D13 (same index column, different other columns), D14 REPLACE /
+# ADD variants, D15 (null_data derived post-dedup), D16 (raw files untouched)
+# and D18 (metric invariant ``rows_resulted == rows_loaded - rows_removed``).
+# --------------------------------------------------------------------------- #
+
+
+def _make_all_identical_report(report_dir: Path) -> Path:
+    """Three identical rows → de-duplication keeps one, one row is exported (D5).
+
+    The dictionary deletes Brand2 (absent here) and adds a tag to Brand1, so
+    the single surviving Brand1 row is exported with the tag.
+    """
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id1;2024-01-01;2024;01;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+def _make_single_row_report(report_dir: Path) -> Path:
+    """One data row → de-duplication removes nothing (D6 single-row case).
+
+    The dictionary deletes Brand2 (absent) and adds a tag to Brand1, so the
+    single Brand1 row is exported.
+    """
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+def _make_replace_rule_report(report_dir: Path) -> Path:
+    """Report with one exact duplicate and a REPLACE rule (D14 REPLACE variant).
+
+    Raw rows = 4, post-dedup = 3. The dictionary REPLACEs Brand2 with
+    ``replaced_tag`` and ADDs ``added_by_brand`` to Brand1. No DELETE rule, so
+    all three post-dedup rows are exported (Brand1×2 tagged, Brand2 replaced).
+    """
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+        "id3;2024-02-01;2024;02;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "r;f;4;NULL;Brand2;replaced_tag",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+def _make_add_only_rule_report(report_dir: Path) -> Path:
+    """Report with one exact duplicate and an ADD-only rule (D14 ADD variant).
+
+    Raw rows = 4, post-dedup = 3. The dictionary only ADDs
+    ``added_by_brand`` to Brand1; no rows are deleted, so all three post-dedup
+    rows are exported.
+    """
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+        "id3;2024-02-01;2024;02;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+def _make_two_file_duplicate_report(report_dir: Path) -> Path:
+    """Two raw files sharing one exact row → de-duplication collapses it (D2).
+
+    ``a.csv`` holds id1 (Brand1) and id2 (Brand2); ``b.csv`` holds id2 (Brand2,
+    duplicate of a.csv's second row) and id3 (Brand1). Raw rows = 4, post-dedup
+    = 3; the dictionary deletes Brand2 → 2 rows exported.
+    """
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    file_a = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+    ]
+    file_b = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id2;2024-01-15;2024;01;Brand2",  # exact duplicate of file_a's last row
+        "id3;2024-02-01;2024;02;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "a.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(file_a) + "\n")
+    with gzip.open(raw_data_dir / "b.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(file_b) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    return report_dir
+
+
+def test_dedup_e2e_two_files_one_duplicate(populated_settings: Path, tmp_path: Path):
+    """D2: one duplicate spread across two raw files collapses to one (4/1/3/2)."""
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_two_file_duplicate_report(tmp_path / "report_two_file")
+
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 4
+    assert result.rows_removed_duplicates == 1
+    assert result.rows_resulted == 3
+    assert result.rows_exported == 2
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+
+def test_dedup_e2e_chunk_boundary_duplicate(
+    populated_settings: Path, tmp_path: Path, monkeypatch
+):
+    """D3: a duplicate straddling a ``CHUNK_SIZE=2`` boundary is removed (7/1/6/4).
+
+    Seven raw rows with one exact duplicate (id1 at the first and last row) and
+    two Brand2 rows that the dictionary deletes. Patching ``CSVWorker.CHUNK_SIZE``
+    to 2 proves the de-duplication is global (one plan), not per chunk.
+    """
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = tmp_path / "report_chunk_boundary"
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id2;2024-01-15;2024;01;Brand2",
+        "id3;2024-01-16;2024;01;Brand2",
+        "id4;2024-02-02;2024;02;Brand1",
+        "id5;2024-02-03;2024;02;Brand1",
+        "id6;2024-02-04;2024;02;Brand1",
+        "id1;2024-01-01;2024;01;Brand1",  # duplicate of the first data row
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    monkeypatch.setattr(CSVWorker, "CHUNK_SIZE", 2)
+    try:
+        result = process_data(report_dir, settings_dir=populated_settings)
+    finally:
+        monkeypatch.setattr(CSVWorker, "CHUNK_SIZE", 10000)
+
+    assert result.rows_loaded == 7
+    assert result.rows_removed_duplicates == 1
+    assert result.rows_resulted == 6
+    assert result.rows_exported == 4
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+    # The two Brand2 rows are deleted; the surviving Brand1 rows are exported.
+    exported_ids = _exported_rows(report_dir)
+    brands = [row[4] for row in exported_ids]
+    assert "Brand2" not in brands
+    assert brands.count("Brand1") == 4
+
+
+def test_dedup_e2e_dedup_on_no_duplicates(
+    populated_settings: Path, synthetic_report: Path
+):
+    """D4: de-duplication ON with no duplicates removes nothing (3/0/3/2)."""
+    _set_config_keys(populated_settings, deduplicate=True)
+
+    result = process_data(synthetic_report, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 3
+    assert result.rows_removed_duplicates == 0
+    assert result.rows_resulted == 3
+    assert result.rows_exported == 2  # Brand2 deleted by the dictionary rule
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+
+def test_dedup_e2e_all_rows_identical(populated_settings: Path, tmp_path: Path):
+    """D5: three identical rows collapse to one survivor, one exported (3/2/1/1)."""
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_all_identical_report(tmp_path / "report_all_identical")
+
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 3
+    assert result.rows_removed_duplicates == 2
+    assert result.rows_resulted == 1
+    assert result.rows_exported == 1
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+    exported = _exported_rows(report_dir)
+    assert len(exported) == 1
+    # The survivor is the Brand1 row carrying the added tag.
+    assert exported[0][4] == "Brand1"
+    assert exported[0][5] == "added_by_brand"
+
+
+def test_dedup_e2e_single_row_input(populated_settings: Path, tmp_path: Path):
+    """D6 (single-row): one data row removes nothing (1/0/1/1)."""
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_single_row_report(tmp_path / "report_single_row")
+
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 1
+    assert result.rows_removed_duplicates == 0
+    assert result.rows_resulted == 1
+    assert result.rows_exported == 1
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+
+def test_dedup_e2e_keeps_first_occurrence_order(
+    populated_settings: Path, tmp_path: Path
+):
+    """D12: the surviving row is the first occurrence in input (sorted-file) order.
+
+    Two rows share ``AdId=idB`` but differ in another column, so they are NOT
+    exact duplicates and both survive; the row order in the export must follow
+    first-occurrence order (idB before idA before idC).
+    """
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = tmp_path / "report_first_occurrence"
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "idB;2024-01-01;2024;01;Brand1",
+        "idA;2024-01-15;2024;01;Brand2",
+        "idB;2024-02-01;2024;02;Brand1",  # same AdId, different other columns
+        "idC;2024-03-01;2024;03;Brand1",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "a;f;4;NULL;Brand1;t",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    # idB, idA, idB, idC are all distinct rows (idB differs in other columns),
+    # so nothing is removed; all four are exported in input order.
+    assert result.rows_loaded == 4
+    assert result.rows_removed_duplicates == 0
+    assert result.rows_resulted == 4
+
+    export_files = sorted((report_dir / "clean_data").glob("*.csv.gz"))
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+    assert merged["AdId"].to_list() == ["idB", "idA", "idB", "idC"]
+
+
+def test_dedup_e2e_same_index_column_different_columns(
+    populated_settings: Path, tmp_path: Path
+):
+    """D13: same ``index_column`` with different other columns → both kept (2/0/2/2).
+
+    Two rows share ``AdId`` but differ in every other column, so they are not
+    exact duplicates and de-duplication keeps both. The per-key distinct table
+    collapses them for rule resolution, but the exported data retains both.
+    """
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = tmp_path / "report_same_index"
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "idX;2024-01-01;2024;01;Brand1",
+        "idX;2024-02-02;2024;02;Brand3",
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "a;f;4;NULL;Brand1;alpha_tag",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 2
+    assert result.rows_removed_duplicates == 0
+    assert result.rows_resulted == 2
+    assert result.rows_exported == 2
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+    # Both distinct rows survive in the export (different BRAND values).
+    export_files = sorted((report_dir / "clean_data").glob("*.csv.gz"))
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+    assert sorted(merged["BRAND"].to_list()) == ["Brand1", "Brand3"]
+
+
+def test_dedup_e2e_with_replace_rule(populated_settings: Path, tmp_path: Path):
+    """D14 (REPLACE): de-duplication composes with a REPLACE rule (4/1/3/3).
+
+    The dictionary REPLACEs Brand2 with ``replaced_tag`` and ADDs a tag to
+    Brand1. No DELETE rule, so all three post-dedup rows are exported.
+    """
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_replace_rule_report(tmp_path / "report_replace")
+
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 4
+    assert result.rows_removed_duplicates == 1
+    assert result.rows_resulted == 3
+    assert result.rows_exported == 3
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+    export_files = sorted((report_dir / "clean_data").glob("*.csv.gz"))
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+    # Brand2 row replaced its tag; Brand1 rows got the added tag.
+    assert "replaced_tag" in merged["tag"].to_list()
+    assert merged["tag"].to_list().count("added_by_brand") == 2
+
+
+def test_dedup_e2e_with_add_rule(populated_settings: Path, tmp_path: Path):
+    """D14 (ADD): de-duplication composes with an ADD-only rule (4/1/3/3).
+
+    The dictionary only ADDs ``added_by_brand`` to Brand1; no rows are deleted,
+    so all three post-dedup rows are exported.
+    """
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_add_only_rule_report(tmp_path / "report_add")
+
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 4
+    assert result.rows_removed_duplicates == 1
+    assert result.rows_resulted == 3
+    assert result.rows_exported == 3
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+    export_files = sorted((report_dir / "clean_data").glob("*.csv.gz"))
+    dfs = [pl.read_csv(f, separator=";") for f in export_files]
+    merged = pl.concat(dfs)
+    # Brand1 rows get the tag; the Brand2 row has no tag.
+    assert merged["tag"].to_list().count("added_by_brand") == 2
+
+
+def test_dedup_e2e_null_data_derived_post_dedup(
+    populated_settings: Path, tmp_path: Path
+):
+    """D15: the non-mapped (``null_data``) export is derived from post-dedup rows.
+
+    One exact duplicate collapses (3→2), and a row that matches no rule
+    (UnknownBrand) is exported to ``null_data`` with its BRAND/tag columns; the
+    duplicate does not produce a second null_data row.
+    """
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = tmp_path / "report_null_data"
+    raw_data_dir = report_dir / "raw_data"
+    dict_dir = report_dir / "dict"
+    raw_data_dir.mkdir(parents=True)
+    dict_dir.mkdir(parents=True)
+
+    csv_lines = [
+        "AdId;researchDate;YEAR;MONTH;BRAND",
+        "id1;2024-01-01;2024;01;Brand1",
+        "id1;2024-01-01;2024;01;Brand1",  # exact duplicate
+        "id9;2024-03-03;2024;03;UnknownBrand",  # matches no rule → null_data
+    ]
+    with gzip.open(raw_data_dir / "sample.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("\n".join(csv_lines) + "\n")
+
+    dict_lines = [
+        "action;match;search;value;term;tag",
+        "d;f;4;NULL;Brand2;",
+        "a;f;4;NULL;Brand1;added_by_brand",
+    ]
+    with open(dict_dir / "merged_dictionary.csv", "w", encoding="utf-8") as f:
+        f.write("\n".join(dict_lines) + "\n")
+
+    result = process_data(report_dir, settings_dir=populated_settings)
+
+    assert result.rows_loaded == 3
+    assert result.rows_removed_duplicates == 1
+    assert result.rows_resulted == 2
+    # id1 (Brand1) and id9 (UnknownBrand) are both exported to clean_data.
+    assert result.rows_exported == 2
+    assert result.rows_resulted == result.rows_loaded - result.rows_removed_duplicates
+
+    # null_data export is present and contains the single unmapped row (post-dedup).
+    assert result.null_data_files, "expected a null_data export file"
+    null_path = result.null_data_files[0]
+    assert null_path.exists()
+    null_df = pl.read_csv(null_path, separator=";")
+    assert null_df.height == 1
+    assert null_df["BRAND"].to_list() == ["UnknownBrand"]
+
+
+def test_dedup_e2e_raw_files_untouched(populated_settings: Path, tmp_path: Path):
+    """D16: raw input files are byte-identical after a de-duplication run."""
+    _set_config_keys(populated_settings, deduplicate=True)
+    report_dir = _make_duplicate_report(tmp_path / "report_raw_untouched")
+    raw_file = report_dir / "raw_data" / "sample.csv.gz"
+    before = raw_file.read_bytes()
+
+    process_data(report_dir, settings_dir=populated_settings)
+
+    assert raw_file.read_bytes() == before
+
+
+def test_dedup_metric_invariant_all_scenarios(populated_settings: Path, tmp_path: Path):
+    """D18: ``rows_resulted == rows_loaded - rows_removed_duplicates`` in every scenario.
+
+    Runs the same duplicate fixture under three de-duplication configurations
+    (off, on-via-config, on-via-override) and asserts the metric invariant holds
+    in each, with the expected removal count.
+    """
+    # Scenario 1: de-duplication OFF (config default false).
+    off_settings = tmp_path / "userdir_off"
+    settings_subdir = off_settings / "settings"
+    settings_subdir.mkdir(parents=True)
+    for name in ("app_config.json5", "log_config.json5"):
+        shutil.copy2(TEMPLATE_SETTINGS_DIR / name, settings_subdir / name)
+    off_report = _make_duplicate_report(tmp_path / "report_inv_off")
+    result_off = process_data(off_report, settings_dir=off_settings)
+    assert result_off.rows_removed_duplicates == 0
+    assert result_off.rows_resulted == result_off.rows_loaded - 0
+    assert result_off.rows_resulted == result_off.rows_loaded
+
+    # Scenario 2: de-duplication ON via config.
+    on_settings = tmp_path / "userdir_on"
+    settings_subdir = on_settings / "settings"
+    settings_subdir.mkdir(parents=True)
+    for name in ("app_config.json5", "log_config.json5"):
+        shutil.copy2(TEMPLATE_SETTINGS_DIR / name, settings_subdir / name)
+    _set_config_keys(on_settings, deduplicate=True)
+    on_report = _make_duplicate_report(tmp_path / "report_inv_on")
+    result_on = process_data(on_report, settings_dir=on_settings)
+    assert result_on.rows_removed_duplicates == 1
+    assert result_on.rows_resulted == result_on.rows_loaded - 1
+    assert result_on.rows_resulted == 3
+
+    # Scenario 3: de-duplication ON via explicit override over config false.
+    override_report = _make_duplicate_report(tmp_path / "report_inv_override")
+    result_override = process_data(
+        override_report, settings_dir=off_settings, deduplicate=True
+    )
+    assert result_override.rows_removed_duplicates == 1
+    assert (
+        result_override.rows_resulted
+        == result_override.rows_loaded - result_override.rows_removed_duplicates
+    )
+    assert result_override.rows_resulted == 3
